@@ -23,7 +23,6 @@ const SHARP_NAMES = ['c','c#','d','d#','e','f','f#','g','g#','a','a#','b'];
 const FLAT_NAMES  = ['c','db','d','eb','e','f','gb','g','ab','a','bb','b'];
 const IS_NAT      = [true,false,true,false,true,true,false,true,false,true,false,true];
 const C2D         = [0,0,1,1,2,3,3,4,4,5,5,6];
-const D2C         = [0,2,4,5,7,9,11];
 
 function dP(pitch: number) { return Math.floor(pitch / 12) * 7 + C2D[pitch % 12]; }
 
@@ -106,9 +105,76 @@ const SYSTEM_H = 220;
 
 const CH = N_LINES * SYSTEM_H + 10;   // total canvas height
 
-/** Diatonic positions for top staff lines: F5 = treble top, A3 = bass top */
-const TR_TOP_DP = dP(77); // F5
-const BS_TOP_DP = dP(57); // A3
+// ============================================================================
+// Staff geometry cache — populated from real VexFlow stave after each draw
+// ============================================================================
+
+interface StaveGeom {
+  staveX:     number;  // stave.getX() — absolute canvas X of stave left edge
+  noteStartX: number;  // stave.getNoteStartX() — absolute canvas X where notes begin
+  staveWidth: number;  // stave.getWidth()
+  topLineY:   number;  // stave.getYForLine(0) — absolute canvas Y of top staff line
+  spacing:    number;  // stave.getSpacingBetweenLines() — px between staff lines
+}
+
+// Diatonic semitone steps going UP from each letter (C=0 … B=6):
+// C→D=2, D→E=2, E→F=1, F→G=2, G→A=2, A→B=2, B→C=1
+const DIATONIC_UP = [2, 2, 1, 2, 2, 2, 1];
+
+// Middle line (VF line index 2 from top) reference pitches:
+// Treble: B4 = MIDI 71 (letter B = index 6)
+// Bass:   D3 = MIDI 50 (letter D = index 1)
+const CLEF_REF = {
+  treble: { midi: 71, letter: 6 },
+  bass:   { midi: 50, letter: 1 },
+} as const;
+
+/** Diatonic step from middle line → MIDI pitch (positive = up, negative = down) */
+function staffStepToMidi(clef: 'treble' | 'bass', step: number): number {
+  const { midi: ref, letter: refL } = CLEF_REF[clef];
+  let midi = ref, letter = refL;
+  if (step > 0) {
+    for (let i = 0; i < step; i++)  { midi += DIATONIC_UP[letter];          letter = (letter + 1) % 7; }
+  } else {
+    for (let i = 0; i < -step; i++) { midi -= DIATONIC_UP[(letter + 6) % 7]; letter = (letter + 6) % 7; }
+  }
+  return Math.max(21, Math.min(108, midi));
+}
+
+/** MIDI pitch → diatonic staff step (0 = middle line) using dP() arithmetic */
+function midiToStaffStep(clef: 'treble' | 'bass', pitch: number): number {
+  return dP(pitch) - dP(CLEF_REF[clef].midi);
+}
+
+/** Snap mouse Y → nearest diatonic MIDI pitch using stave geometry */
+function snapPitch(ry: number, isBass: boolean, geom: StaveGeom): number {
+  const sp2  = geom.spacing / 2;
+  const midY = geom.topLineY + 2 * geom.spacing;  // Y of middle line (line index 2)
+  const step = Math.round((midY - ry) / sp2);
+  return staffStepToMidi(isBass ? 'bass' : 'treble', step);
+}
+
+/** MIDI pitch → absolute canvas Y, exact same arithmetic VexFlow uses internally */
+function pitchToStaveY(pitch: number, isBass: boolean, geom: StaveGeom): number {
+  const step = midiToStaffStep(isBass ? 'bass' : 'treble', pitch);
+  return geom.topLineY + 2 * geom.spacing - step * (geom.spacing / 2);
+}
+
+/** Snap mouse X → absolute tick using stave geometry (invertible) */
+function snapTickFn(rx: number, measIdx: number, snapTpq: number, geom: StaveGeom): number {
+  const noteW   = geom.staveX + geom.staveWidth - geom.noteStartX - 8;
+  const relX    = Math.max(0, rx - geom.noteStartX);
+  const rawTick = (relX / Math.max(noteW, 1)) * (4 * TPQ);
+  const snapped = Math.round(rawTick / snapTpq) * snapTpq;
+  return measIdx * 4 * TPQ + Math.max(0, Math.min(4 * TPQ - snapTpq, snapped));
+}
+
+/** Absolute tick → ghost X — exact inverse of snapTickFn for zero-offset ghost placement */
+function tickToStaveX(tick: number, measIdx: number, geom: StaveGeom): number {
+  const noteW      = geom.staveX + geom.staveWidth - geom.noteStartX - 8;
+  const tickInMeas = tick - measIdx * 4 * TPQ;
+  return geom.noteStartX + (tickInMeas / (4 * TPQ)) * noteW;
+}
 
 // ============================================================================
 // Per-system coordinate helpers
@@ -131,34 +197,6 @@ function sysY(line: number): number { return line * SYSTEM_H; }
 function trebleTopY(line: number): number { return sysY(line) + TREBLE_TOP; }
 function bassTopY  (line: number): number { return sysY(line) + BASS_TOP;   }
 
-/**
- * MIDI pitch → absolute canvas Y.
- * Uses VexFlow's native line formula: Y = topLineY + (VF_TOP_LINE - vfLine(pitch, clef)) * VFS
- * VexFlow "line" is 1-indexed from bottom (line 5 = top, line 1 = bottom).
- * Formula: vfLine(treble) = dP(pitch) / 2 - 25    (C4=line0 = ledger below staff)
- *          vfLine(bass)   = treble_vfLine + 6
- * Simplified equivalent to original diatonic formula — kept because verified correct.
- * topLineY = real getYForLine(0) from VexFlow after draw.
- */
-function pitchToAbsY(pitch: number, isBass: boolean, topLineY: number): number {
-  // VexFlow line for treble: C4(60)=0, each diatonic step = +0.5
-  // VF top line = 5 → Y at top = topLineY + (5-5)*10 = topLineY
-  // trebleVFLine(pitch) = (dP(pitch) - dP(64)) * 0.5 + 1   [E4=1 = bottom line]
-  // Actually simplest: use dP difference from known top anchor
-  const topDP = isBass ? BS_TOP_DP : TR_TOP_DP;
-  return topLineY + (topDP - dP(pitch)) * (VFS / 2);
-}
-
-/** Absolute canvas Y → nearest diatonic MIDI pitch */
-function absYToPitch(y: number, isBass: boolean, topLineY: number): number {
-  const topDP = isBass ? BS_TOP_DP : TR_TOP_DP;
-  const steps = Math.round((y - topLineY) / (VFS / 2));
-  const total = topDP - steps;
-  const oct   = Math.floor(total / 7);
-  const diat  = ((total % 7) + 7) % 7;
-  return Math.max(21, Math.min(108, oct * 12 + D2C[diat]));
-}
-
 // ============================================================================
 // Default note-start X fallbacks (before first VexFlow render)
 // ============================================================================
@@ -167,38 +205,13 @@ const DEFAULT_NOTE_START: number[] = Array.from({ length: N_MEAS }, (_, m) => {
   return measX(m) + (posInLine(m) === 0 ? 82 : 12);
 });
 
-/** tick → canvas X using per-measure note-start X */
+/** tick → canvas X using per-measure note-start X — used by pedal overlay only */
 function tickToOverlayX(tick: number, noteStartX: number[] = DEFAULT_NOTE_START): number {
   const m          = Math.min(N_MEAS - 1, Math.floor(tick / (4 * TPQ)));
   const beatInMeas = (tick % (4 * TPQ)) / TPQ;
   const naL        = noteStartX[m];
   const naW        = measX(m) + measWidth(m) - naL - 8;
   return naL + (beatInMeas / 4) * naW;
-}
-
-/**
- * Given absolute canvas (x, y), return the measure index m and the
- * beat-snapped absolute tick. Uses Y to identify which system we are in.
- */
-function xyToTick(
-  x: number, y: number,
-  snapTicks: number,
-  noteStartX: number[] = DEFAULT_NOTE_START,
-): { m: number; tick: number } {
-  const line = Math.min(N_LINES - 1, Math.floor(y / SYSTEM_H));
-  // Which measure in this line?
-  let foundM = line * N_PER_LINE;
-  for (let pos = 0; pos < N_PER_LINE; pos++) {
-    const thisM = line * N_PER_LINE + pos;
-    const mEnd  = measX(thisM) + measWidth(thisM);
-    if (pos === N_PER_LINE - 1 || x < mEnd) { foundM = thisM; break; }
-  }
-  const naL      = noteStartX[foundM];
-  const naW      = measX(foundM) + measWidth(foundM) - naL - 8;
-  const xIn      = Math.max(0, x - naL);
-  const fracTick = Math.min(4 * TPQ - 1, (xIn / Math.max(naW, 1)) * 4 * TPQ);
-  const snapped  = Math.round(fracTick / snapTicks) * snapTicks;
-  return { m: foundM, tick: foundM * 4 * TPQ + Math.max(0, snapped) };
 }
 
 // ============================================================================
@@ -259,17 +272,16 @@ export function ScoreCanvas({
     { treble: [], bass: [] },
   );
   /**
-   * Real VexFlow top-staff-line Y per system per clef, populated from stave.getYForLine(0)
-   * after each draw. Indexed by system line number (0 = first system, 1 = second, etc.).
-   * Falls back to hardcoded trebleTopY(line) / bassTopY(line) before first render.
+   * Real VexFlow top-staff-line Y per system per clef.
+   * Key: line index.  Used by pedal overlay fallback.
    */
   const staffTopYRef = useRef<{ treble: number[]; bass: number[] }>({ treble: [], bass: [] });
 
   /**
-   * Per-system spacing in px (= stave.getSpacingBetweenLines(), always 10).
-   * Stored for reference; currently hardcoded as VFS=10.
+   * Stave geometry cache keyed `${line}:${pos}:treble` / `${line}:${pos}:bass`.
+   * Populated after each VexFlow draw. Used by snapPitch / snapTickFn / pitchToStaveY.
    */
-  const spacingRef = useRef<number>(VFS);
+  const staveGeomRef = useRef<Map<string, StaveGeom>>(new Map());
 
   const [hoverPos, setHoverPos] = useState<{
     x: number; y: number;
@@ -335,15 +347,24 @@ export function ScoreCanvas({
           const noteStartX = (trebleStave as any).getNoteStartX();
           measNoteStartXRef.current[m] = noteStartX;
 
-          // Real top-staff-line Y from VexFlow (only need once per system).
+          // Real top-staff-line Y from VexFlow.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const tTopY = (trebleStave as any).getYForLine(0) as number;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const bTopY = (bassStave   as any).getYForLine(0) as number;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const spac  = ((trebleStave as any).getSpacingBetweenLines?.() ?? VFS) as number;
+
           if (pos === 0) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            staffTopYRef.current.treble[line] = (trebleStave as any).getYForLine(0);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            staffTopYRef.current.bass[line]   = (bassStave   as any).getYForLine(0);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            spacingRef.current = (trebleStave as any).getSpacingBetweenLines?.() ?? VFS;
+            staffTopYRef.current.treble[line] = tTopY;
+            staffTopYRef.current.bass[line]   = bTopY;
           }
+
+          // Populate stave geometry cache for snap functions (all measures, both clefs)
+          const tGeomEntry: StaveGeom = { staveX: mx, noteStartX, staveWidth: mw, topLineY: tTopY, spacing: spac };
+          const bGeomEntry: StaveGeom = { staveX: mx, noteStartX, staveWidth: mw, topLineY: bTopY, spacing: spac };
+          staveGeomRef.current.set(`${line}:${pos}:treble`, tGeomEntry);
+          staveGeomRef.current.set(`${line}:${pos}:bass`,   bGeomEntry);
 
           // Pre-populate beat-0 calibration (will be overridden by real sn.getAbsoluteX() below)
           newTickActualX.treble.push([m * 4 * TPQ, noteStartX]);
@@ -434,9 +455,7 @@ export function ScoreCanvas({
               voice.draw(ctx, stave);
 
               // After draw: read real X, calibrate tick→X, and register note hit targets
-              const bucket       = isBass ? newTickActualX.bass : newTickActualX.treble;
-              const realTopLineY = staffTopYRef.current[isBass ? 'bass' : 'treble'][line]
-                ?? (isBass ? bassTopY(line) : trebleTopY(line));
+              const bucket = isBass ? newTickActualX.bass : newTickActualX.treble;
 
               for (const { sn, tick, evId, pitches } of snEvPairs) {
                 try {
@@ -460,7 +479,7 @@ export function ScoreCanvas({
                       const pitch = pitches[ki];
                       const cy = (realYs && typeof realYs[ki] === 'number' && isFinite(realYs[ki]))
                         ? realYs[ki]
-                        : pitchToAbsY(pitch, isBass, realTopLineY);
+                        : pitchToStaveY(pitch, isBass, isBass ? bGeomEntry : tGeomEntry);
                       noteHitsRef.current.push({
                         eventId:   evId,
                         pitch,
@@ -488,43 +507,6 @@ export function ScoreCanvas({
   }, [score, selectedNoteId]);
 
   // ============================================================================
-  // Ghost X: interpolate/extrapolate from real VexFlow note positions
-  // ============================================================================
-
-  const resolveGhostX = useCallback((tick: number, isBass: boolean): number => {
-    const txArr  = isBass ? tickActualXRef.current.bass : tickActualXRef.current.treble;
-    const m      = Math.min(N_MEAS - 1, Math.floor(tick / (4 * TPQ)));
-    const mStart = m * 4 * TPQ;
-    const mEnd   = mStart + 4 * TPQ;
-    const naL    = measNoteStartXRef.current[m];
-    const naW    = measX(m) + measWidth(m) - naL - 8;
-
-    let before: [number, number] | null = null;
-    let after:  [number, number] | null = null;
-    for (const [t, x] of txArr) {
-      if (t < mStart || t >= mEnd) continue;
-      if (t <= tick && (!before || t > before[0])) before = [t, x];
-      if (t >  tick && (!after  || t < after[0]))  after  = [t, x];
-    }
-
-    if (before && after) {
-      const [t0, x0] = before, [t1, x1] = after;
-      return x0 + (x1 - x0) * (tick - t0) / (t1 - t0);
-    }
-    if (before) {
-      const [t0, x0] = before;
-      const remW = measX(m) + measWidth(m) - 8 - x0;
-      return x0 + (tick - t0) / Math.max(mEnd - t0, 1) * remW;
-    }
-    if (after) {
-      const [t1, x1] = after;
-      return naL + (tick - mStart) / Math.max(t1 - mStart, 1) * (x1 - naL);
-    }
-    // No notes in this measure — pure linear estimate
-    return naL + ((tick % (4 * TPQ)) / TPQ / 4) * naW;
-  }, []);
-
-  // ============================================================================
   // Mouse events
   // ============================================================================
 
@@ -534,55 +516,59 @@ export function ScoreCanvas({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    // Which system line is the cursor on?
-    const line = Math.min(N_LINES - 1, Math.floor(y / SYSTEM_H));
-
-    // Block the clef/time-sig area in the first measure of each system
-    // First measure (pos=0) starts at x=0; clef area is roughly x < FIRST_W * 0.36
+    // Which system line and position within that line?
+    const line    = Math.min(N_LINES - 1, Math.floor(y / SYSTEM_H));
     const posHere = (() => {
-      for (let pos = N_PER_LINE - 1; pos >= 0; pos--) {
-        if (x >= measX(line * N_PER_LINE + pos)) return pos;
+      for (let p = N_PER_LINE - 1; p >= 0; p--) {
+        if (x >= measX(line * N_PER_LINE + p)) return p;
       }
       return 0;
     })();
-    if (posHere === 0 && x < FIRST_W * 0.36) {
-      setHoverPos(null);
-      return;
-    }
 
-    // Use real VexFlow top-line Y if available, otherwise fall back to hardcoded constant
-    const realTrebleTopY = staffTopYRef.current.treble[line] ?? trebleTopY(line);
-    const realBassTopY   = staffTopYRef.current.bass[line]   ?? bassTopY(line);
-    const sp             = spacingRef.current;  // spacing between lines (10px)
+    // Block the clef/time-sig area in the first measure of each system
+    if (posHere === 0 && x < FIRST_W * 0.36) { setHoverPos(null); return; }
 
-    // Staff bottom lines (line 4 from top = bottommost line)
-    const trebleBotY = realTrebleTopY + 4 * sp;  // E4 bottom line
-    const bassBotY   = realBassTopY   + 4 * sp;  // G2 bottom line
+    const measIdx = line * N_PER_LINE + posHere;
 
-    // Zone assignment: use explicit staff boundary midpoint
-    // Midpoint between treble bottom and bass top = boundary
-    const boundary = (trebleBotY + realBassTopY) / 2;
-    const isBass   = y > boundary;
-    const topLineY = isBass ? realBassTopY : realTrebleTopY;
-    const botLineY = isBass ? bassBotY     : trebleBotY;
+    // Look up stave geometry for both clefs (to determine treble/bass boundary)
+    const tGeom = staveGeomRef.current.get(`${line}:${posHere}:treble`);
+    const bGeom = staveGeomRef.current.get(`${line}:${posHere}:bass`);
 
-    // Only respond within ±4 ledger lines of the top/bottom of the assigned staff
+    // Fallback Y values before first VexFlow render
+    const trebleTop = tGeom?.topLineY ?? staffTopYRef.current.treble[line] ?? (line * SYSTEM_H + TREBLE_TOP);
+    const bassTop   = bGeom?.topLineY ?? staffTopYRef.current.bass[line]   ?? (line * SYSTEM_H + BASS_TOP);
+    const sp        = tGeom?.spacing  ?? VFS;
+
+    const trebleBotY = trebleTop + 4 * sp;
+    const bassBotY   = bassTop   + 4 * sp;
+    const boundary   = (trebleBotY + bassTop) / 2;
+    const isBass     = y > boundary;
+
+    // Pick the correct geometry object; build a minimal fallback if not yet cached
+    const geom: StaveGeom = (isBass ? bGeom : tGeom) ?? {
+      staveX:     measX(measIdx),
+      noteStartX: measX(measIdx) + (posHere === 0 ? 82 : 12),
+      staveWidth: measWidth(measIdx),
+      topLineY:   isBass ? bassTop : trebleTop,
+      spacing:    sp,
+    };
+
+    const topLineY = isBass ? bassTop : trebleTop;
+    const botLineY = isBass ? bassBotY : trebleBotY;
+
     const LEDGER_ZONE = 4 * sp;
-    if (y < topLineY - LEDGER_ZONE || y > botLineY + LEDGER_ZONE) {
-      setHoverPos(null);
-      return;
-    }
+    if (y < topLineY - LEDGER_ZONE || y > botLineY + LEDGER_ZONE) { setHoverPos(null); return; }
 
-    const pitch     = absYToPitch(y, isBass, topLineY);
-    const noteY     = pitchToAbsY(pitch, isBass, topLineY);
-    const snapTicks = DURATION_VALUES[currentDuration];
-    const { tick }  = xyToTick(x, y, snapTicks, measNoteStartXRef.current);
-    const ghostX    = resolveGhostX(tick, isBass);
+    const snapTpq = DURATION_VALUES[currentDuration];
+    const pitch   = snapPitch(y, isBass, geom);
+    const noteY   = pitchToStaveY(pitch, isBass, geom);
+    const tick    = snapTickFn(x, measIdx, snapTpq, geom);
+    const ghostX  = tickToStaveX(tick, measIdx, geom);
 
     const next = { x: ghostX, y: noteY, pitch, tick, isBass, staveTopY: topLineY, staveBotY: botLineY, line };
     hoverPosRef.current = next;
     setHoverPos(next);
-  }, [currentDuration, resolveGhostX]);
+  }, [currentDuration]);
 
   const handleMouseLeave = useCallback(() => {
     hoverPosRef.current = null;
@@ -636,9 +622,10 @@ export function ScoreCanvas({
     const hasFlag2 = dur <= 120;
     const gc       = editorTool === 'pedal' ? '#7c3aed' : '#2563eb';
 
-    // Stem direction: VexFlow renders single-voice with ALL stems UP in treble,
-    // ALL stems DOWN in bass. Match that, not the music-theory pitch rule.
-    const stemUp = !isBass;
+    // Stem direction: above middle line → stem down; at/below → stem up
+    // Matches VexFlow single-voice note stem direction
+    const step   = midiToStaffStep(isBass ? 'bass' : 'treble', pitch);
+    const stemUp = step <= 0;
     const sBaseX   = stemUp ? nx + OVL_NRX - 0.5 : nx - OVL_NRX + 0.5;
     const sTipY    = stemUp ? ny - OVL_STEM       : ny + OVL_STEM;
     const d        = stemUp ? 1 : -1;
