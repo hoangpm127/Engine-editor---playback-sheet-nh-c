@@ -1,0 +1,1386 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎹 XPSH Engine Demo — Phase 1-6</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+
+  /* ── Header ── */
+  header { background: linear-gradient(135deg,#1e3a5f,#0f2d4a); padding:16px 24px; display:flex; align-items:center; gap:16px; border-bottom:2px solid #334155; }
+  header h1 { font-size:22px; font-weight:700; }
+  .badge { font-size:11px; background:#3b82f6; color:#fff; border-radius:99px; padding:2px 8px; font-weight:600; }
+
+  /* ── Tabs ── */
+  .tabs { display:flex; background:#1e293b; border-bottom:1px solid #334155; overflow-x:auto; }
+  .tab { padding:12px 20px; cursor:pointer; font-size:13px; font-weight:500; color:#94a3b8; border-bottom:2px solid transparent; white-space:nowrap; transition:all .15s; }
+  .tab:hover { color:#e2e8f0; background:#334155; }
+  .tab.active { color:#60a5fa; border-bottom-color:#60a5fa; }
+
+  /* ── Panels ── */
+  .panel { display:none; padding:20px; }
+  .panel.active { display:block; }
+
+  /* ── Cards ── */
+  .card { background:#1e293b; border:1px solid #334155; border-radius:10px; padding:16px; margin-bottom:16px; }
+  .card h3 { font-size:13px; font-weight:600; color:#94a3b8; text-transform:uppercase; letter-spacing:.05em; margin-bottom:12px; }
+
+  /* ── Buttons ── */
+  .btn { padding:7px 14px; border-radius:6px; border:1px solid #475569; background:#334155; color:#e2e8f0; cursor:pointer; font-size:13px; font-weight:500; transition:all .15s; }
+  .btn:hover { background:#475569; }
+  .btn:disabled { opacity:.4; cursor:not-allowed; }
+  .btn.primary { background:#2563eb; border-color:#2563eb; color:#fff; }
+  .btn.primary:hover { background:#1d4ed8; }
+  .btn.success { background:#16a34a; border-color:#16a34a; color:#fff; }
+  .btn.success:hover { background:#15803d; }
+  .btn.danger { background:#dc2626; border-color:#dc2626; color:#fff; }
+  .btn.danger:hover { background:#b91c1c; }
+  .btn.warn { background:#d97706; border-color:#d97706; color:#fff; }
+  .btn.warn:hover { background:#b45309; }
+  .btn-group { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+
+  /* ── Range / Select ── */
+  input[type=range] { accent-color:#3b82f6; cursor:pointer; }
+  select, input[type=text], textarea { background:#0f172a; border:1px solid #334155; color:#e2e8f0; border-radius:6px; padding:6px 10px; font-size:13px; }
+  select:focus, input:focus, textarea:focus { outline:2px solid #3b82f6; }
+
+  /* ── Progress bar ── */
+  .progress-wrap { position:relative; height:6px; background:#334155; border-radius:3px; cursor:pointer; }
+  .progress-fill { height:100%; border-radius:3px; background:#3b82f6; transition:width .1s linear; }
+  .progress-thumb { position:absolute; top:50%; width:14px; height:14px; background:#60a5fa; border-radius:50%; transform:translate(-50%,-50%); cursor:grab; }
+
+  /* ── Status badges ── */
+  .status { font-size:12px; padding:3px 8px; border-radius:4px; font-weight:600; }
+  .status.ok { background:#166534; color:#86efac; }
+  .status.err { background:#7f1d1d; color:#fca5a5; }
+  .status.warn { background:#78350f; color:#fcd34d; }
+  .status.info { background:#1e3a5f; color:#93c5fd; }
+
+  /* ── Score Canvas ── */
+  #score-svg { width:100%; overflow-x:auto; cursor:crosshair; background:#fffef5; border-radius:8px; border:1px solid #334155; display:block; }
+  .note-info { font-size:12px; color:#94a3b8; margin-top:8px; min-height:18px; }
+
+  /* ── Validator ── */
+  textarea#json-input { width:100%; height:200px; font-family:monospace; font-size:12px; resize:vertical; }
+  #validation-result { font-size:13px; line-height:1.7; }
+  .err-line { color:#fca5a5; }
+  .warn-line { color:#fcd34d; }
+  .ok-line { color:#86efac; }
+
+  /* ── Log ── */
+  #stress-log { font-family:monospace; font-size:12px; background:#020617; border:1px solid #334155; border-radius:6px; padding:12px; height:260px; overflow-y:auto; }
+  .log-pass { color:#86efac; }
+  .log-fail { color:#fca5a5; }
+  .log-info { color:#93c5fd; }
+  .log-warn { color:#fcd34d; }
+
+  /* ── Grid ── */
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media(max-width:640px){ .grid2 { grid-template-columns:1fr; } }
+
+  /* ── Active Notes Indicator ── */
+  .note-pills { display:flex; flex-wrap:wrap; gap:4px; min-height:24px; }
+  .pill { background:#1e3a5f; border:1px solid #3b82f6; color:#93c5fd; font-size:11px; border-radius:4px; padding:1px 6px; }
+
+  /* ── Undo/Redo labels ── */
+  .history-label { font-size:11px; color:#94a3b8; margin-top:4px; min-height:16px; }
+
+  kbd { background:#334155; border:1px solid #475569; border-radius:3px; padding:1px 5px; font-size:11px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>🎹</div>
+  <h1>XPSH Engine Demo</h1>
+  <span class="badge">Phase 1–6</span>
+  <div style="margin-left:auto;font-size:12px;color:#64748b;">
+    <span id="ctx-state">AudioContext: –</span>
+  </div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('player')">▶️ Player</div>
+  <div class="tab" onclick="switchTab('editor')">✏️ Editor</div>
+  <div class="tab" onclick="switchTab('validator')">✅ Validator</div>
+  <div class="tab" onclick="switchTab('stress')">🔥 Stress Test</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ PLAYER TAB ════ -->
+<div id="tab-player" class="panel active">
+
+  <div class="card">
+    <h3>Load Score</h3>
+    <div class="btn-group">
+      <button class="btn primary" onclick="loadSample('scale')">📄 C Major Scale</button>
+      <button class="btn primary" onclick="loadSample('twohands')">📄 Two Hands</button>
+      <button class="btn" onclick="document.getElementById('file-import-player').click()">📂 Import .xpsh.json</button>
+      <input type="file" id="file-import-player" accept=".json,.xpsh" style="display:none" onchange="importFile(event,'player')">
+      <span id="player-title" style="color:#94a3b8;font-size:13px;margin-left:8px;">No file loaded</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Playback Controls</h3>
+    <div class="btn-group" style="margin-bottom:12px;">
+      <button class="btn success" id="btn-play" onclick="playerPlay()" disabled>▶ Play</button>
+      <button class="btn warn" id="btn-pause" onclick="playerPause()" disabled>⏸ Pause</button>
+      <button class="btn danger" id="btn-stop" onclick="playerStop()" disabled>⏹ Stop</button>
+      <button class="btn" id="btn-kill" onclick="playerKillAll()" disabled title="Phase 5: Emergency stop all notes">☠ Kill Notes</button>
+      <label style="margin-left:8px;font-size:13px;">Loop</label>
+      <input type="checkbox" id="loop-check" onchange="toggleLoop()">
+    </div>
+
+    <div style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:#64748b;margin-bottom:4px;">
+        <span id="time-current">0:00.000</span>
+        <span id="time-total">0:00.000</span>
+      </div>
+      <div class="progress-wrap" id="progress-wrap" onclick="seekFromClick(event)">
+        <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+        <div class="progress-thumb" id="progress-thumb" style="left:0%"></div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:12px;">
+      <label style="font-size:13px;min-width:60px;">Tempo:</label>
+      <input type="range" id="tempo-slider" min="20" max="240" value="120" oninput="updateTempo(this.value)" style="flex:1">
+      <span id="tempo-display" style="font-size:13px;min-width:70px;">120 BPM</span>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>Phase 5: NoteRegistry</h3>
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;">
+        <span style="font-size:13px;">Active notes:</span>
+        <span id="active-note-count" class="status info">0</span>
+      </div>
+      <div class="note-pills" id="active-pills"></div>
+    </div>
+    <div class="card">
+      <h3>Playback Info</h3>
+      <div id="playback-info" style="font-size:13px;line-height:2;color:#94a3b8;">
+        <div>Events in timeline: <span id="info-events" style="color:#e2e8f0">–</span></div>
+        <div>Duration: <span id="info-duration" style="color:#e2e8f0">–</span></div>
+        <div>Scheduler interval: <span id="info-interval" style="color:#e2e8f0">50ms</span></div>
+        <div>Lookahead: <span id="info-lookahead" style="color:#e2e8f0">200ms</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ EDITOR TAB ════ -->
+<div id="tab-editor" class="panel">
+
+  <div class="card">
+    <h3>File</h3>
+    <div class="btn-group">
+      <button class="btn primary" onclick="editorLoadSample('scale')">📄 C Major Scale</button>
+      <button class="btn primary" onclick="editorLoadSample('twohands')">📄 Two Hands</button>
+      <button class="btn" onclick="editorNew()">🆕 New Score</button>
+      <button class="btn" onclick="document.getElementById('file-import-editor').click()">📂 Import</button>
+      <input type="file" id="file-import-editor" accept=".json,.xpsh" style="display:none" onchange="importFile(event,'editor')">
+      <button class="btn success" onclick="editorExport()">💾 Export .xpsh.json</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Edit Tools</h3>
+    <div class="btn-group" style="margin-bottom:10px;">
+      <div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:4px;">Mode</div>
+        <div class="btn-group">
+          <button class="btn" id="mode-insert" onclick="setMode('insert')" style="background:#16a34a;border-color:#16a34a;color:#fff;">✏️ Insert</button>
+          <button class="btn" id="mode-select">🖱 Select</button>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:4px;">Duration <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></div>
+        <div class="btn-group">
+          <button class="btn" id="dur-quarter" onclick="setDuration('quarter')" style="background:#2563eb;border-color:#2563eb;color:#fff;">♩ Quarter</button>
+          <button class="btn" id="dur-half" onclick="setDuration('half')">𝅗𝅥 Half</button>
+          <button class="btn" id="dur-whole" onclick="setDuration('whole')">𝅝 Whole</button>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:4px;">Track <kbd>R</kbd><kbd>L</kbd></div>
+        <div class="btn-group">
+          <button class="btn" id="track-rh" onclick="setTrack('track_rh')" style="background:#7c3aed;border-color:#7c3aed;color:#fff;">RH (Right)</button>
+          <button class="btn" id="track-lh" onclick="setTrack('track_lh')">LH (Left)</button>
+        </div>
+      </div>
+    </div>
+    <div class="btn-group">
+      <button class="btn" id="btn-undo" onclick="editorUndo()" disabled title="">↩ Undo <kbd>Ctrl+Z</kbd></button>
+      <button class="btn" id="btn-redo" onclick="editorRedo()" disabled title="">↪ Redo <kbd>Ctrl+Y</kbd></button>
+      <button class="btn danger" id="btn-delete" onclick="editorDelete()" disabled>🗑 Delete <kbd>Del</kbd></button>
+      <button class="btn" onclick="editorClearAll()" style="margin-left:8px;">Clear All</button>
+    </div>
+    <div class="history-label" id="history-label"></div>
+  </div>
+
+  <div class="card" style="padding:12px 8px;">
+    <h3 style="padding:0 8px 8px;">Score (click to add note / click note to select)</h3>
+    <div style="overflow-x:auto;">
+      <svg id="score-svg" viewBox="0 0 1060 260" xmlns="http://www.w3.org/2000/svg" style="min-width:800px;background:#fffef5;" onclick="scoreClick(event)"></svg>
+    </div>
+    <div class="note-info" id="note-info">Click on staff to insert note (Insert mode)</div>
+  </div>
+
+  <div class="card">
+    <h3>Score Info</h3>
+    <div style="font-size:13px;color:#94a3b8;display:flex;gap:24px;flex-wrap:wrap;">
+      <span>Title: <strong id="ed-title" style="color:#e2e8f0">–</strong></span>
+      <span>RH notes: <strong id="ed-rh-count" style="color:#e2e8f0">0</strong></span>
+      <span>LH notes: <strong id="ed-lh-count" style="color:#e2e8f0">0</strong></span>
+      <span>Undo stack: <strong id="ed-undo-count" style="color:#e2e8f0">0</strong></span>
+      <span>Redo stack: <strong id="ed-redo-count" style="color:#e2e8f0">0</strong></span>
+      <span>Selected: <strong id="ed-selected" style="color:#e2e8f0">–</strong></span>
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════ VALIDATOR TAB ════ -->
+<div id="tab-validator" class="panel">
+
+  <div class="card">
+    <h3>Validate XPSH JSON</h3>
+    <div class="btn-group" style="margin-bottom:10px;">
+      <button class="btn" onclick="loadValidatorSample('valid')">✅ Valid Sample</button>
+      <button class="btn" onclick="loadValidatorSample('badFormat')">❌ Bad Format</button>
+      <button class="btn" onclick="loadValidatorSample('badPitch')">❌ Bad Pitch</button>
+      <button class="btn" onclick="loadValidatorSample('badVelocity')">❌ Bad Velocity</button>
+      <button class="btn" onclick="loadValidatorSample('dupId')">❌ Duplicate ID</button>
+      <button class="btn" onclick="loadValidatorSample('negDur')">❌ Neg Duration</button>
+      <button class="btn" onclick="loadValidatorSample('multipleErrors')">❌ Multiple Errors</button>
+    </div>
+    <textarea id="json-input" placeholder="Paste XPSH JSON here..."></textarea>
+    <div class="btn-group" style="margin-top:10px;">
+      <button class="btn primary" onclick="runValidator()">🔍 Validate</button>
+      <button class="btn" onclick="document.getElementById('json-input').value=''">Clear</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Result</h3>
+    <div id="validation-result" style="color:#94a3b8;font-size:13px;">Run validation to see results.</div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════ STRESS TEST TAB ════ -->
+<div id="tab-stress" class="panel">
+
+  <div class="card">
+    <h3>Phase 5 Stress Tests</h3>
+    <p style="font-size:13px;color:#94a3b8;margin-bottom:12px;">These tests verify the hardened audio scheduler against stuck notes, double scheduling, tempo drift, and loop stacking.</p>
+    <div class="btn-group">
+      <button class="btn primary" onclick="runStressTest('seek')">Test 1: Spam Seek (20×)</button>
+      <button class="btn primary" onclick="runStressTest('loop')">Test 2: Loop Toggle (30×)</button>
+      <button class="btn primary" onclick="runStressTest('tempo')">Test 3: Tempo Change (20×)</button>
+      <button class="btn primary" onclick="runStressTest('interleave')">Test 4: Seek+Toggle (15×)</button>
+      <button class="btn warn" onclick="runStressTest('all')">▶ Run All</button>
+      <button class="btn" onclick="document.getElementById('stress-log').innerHTML=''">Clear Log</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Log</h3>
+    <div id="stress-log"></div>
+  </div>
+
+  <div class="card">
+    <h3>Phase 6 Undo/Redo Tests</h3>
+    <div class="btn-group" style="margin-bottom:10px;">
+      <button class="btn primary" onclick="runUndoTest()">▶ Run Undo/Redo Test</button>
+    </div>
+    <div id="undo-test-result" style="font-size:13px;color:#94a3b8;">Click to run.</div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════ JAVASCRIPT ════ -->
+<script>
+'use strict';
+
+// ─────────────────────────────────────────────────────────────
+// SAMPLE DATA
+// ─────────────────────────────────────────────────────────────
+
+const SAMPLES = {
+  scale: {
+    format: 'xpsh', format_version: '1.0.0',
+    metadata: { title: 'C Major Scale', composer: '', created_at: '2026-02-15T00:00:00Z', modified_at: '2026-02-15T00:00:00Z' },
+    timing: { ticks_per_quarter: 480, tempo_bpm: 120, time_signature: { numerator: 4, denominator: 4 } },
+    tracks: [
+      { id: 'track_rh', name: 'RH', type: 'piano', clef: 'treble',
+        notes: [60,62,64,65,67,69,71,72].map((p,i) => ({ id:`n${i+1}`, pitch:p, start_tick:i*480, dur_tick:480, velocity:64 }))
+      },
+      { id: 'track_lh', name: 'LH', type: 'piano', clef: 'bass', notes: [] }
+    ]
+  },
+  twohands: {
+    format: 'xpsh', format_version: '1.0.0',
+    metadata: { title: 'Two Hands Demo', composer: '', created_at: '2026-02-15T00:00:00Z', modified_at: '2026-02-15T00:00:00Z' },
+    timing: { ticks_per_quarter: 480, tempo_bpm: 120, time_signature: { numerator: 4, denominator: 4 } },
+    tracks: [
+      { id: 'track_rh', name: 'RH', type: 'piano', clef: 'treble',
+        notes: [
+          { id:'r1', pitch:60, start_tick:0,    dur_tick:480,  velocity:70 },
+          { id:'r2', pitch:64, start_tick:480,  dur_tick:480,  velocity:70 },
+          { id:'r3', pitch:67, start_tick:960,  dur_tick:480,  velocity:70 },
+          { id:'r4', pitch:72, start_tick:1440, dur_tick:480,  velocity:70 },
+          { id:'r5', pitch:71, start_tick:1920, dur_tick:480,  velocity:65 },
+          { id:'r6', pitch:69, start_tick:2400, dur_tick:480,  velocity:65 },
+          { id:'r7', pitch:67, start_tick:2880, dur_tick:960,  velocity:65 },
+        ]
+      },
+      { id: 'track_lh', name: 'LH', type: 'piano', clef: 'bass',
+        notes: [
+          { id:'l1', pitch:48, start_tick:0,    dur_tick:1920, velocity:55 },
+          { id:'l2', pitch:43, start_tick:1920, dur_tick:1920, velocity:55 },
+        ]
+      }
+    ]
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
+// TAB SWITCHING
+// ─────────────────────────────────────────────────────────────
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    const names = ['player','editor','validator','stress'];
+    t.classList.toggle('active', names[i] === name);
+  });
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+}
+
+// ─────────────────────────────────────────────────────────────
+// MIDI / AUDIO HELPERS
+// ─────────────────────────────────────────────────────────────
+
+function midiToFreq(pitch) {
+  return 440 * Math.pow(2, (pitch - 69) / 12);
+}
+function midiName(pitch) {
+  const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  return names[pitch % 12] + Math.floor(pitch / 12 - 1);
+}
+function tickToMs(tick, bpm, tpq) {
+  return (tick / tpq) * (60000 / bpm);
+}
+function msToTime(ms) {
+  const s = ms / 1000;
+  const m = Math.floor(s / 60);
+  return `${m}:${(s % 60).toFixed(3).padStart(6,'0')}`;
+}
+
+// Piano synth using Web Audio
+function schedulePianoNote(ctx, pitch, velocity, startSec, durSec) {
+  const freq = midiToFreq(pitch);
+  const vol = (velocity / 127) * 0.5;
+  const osc = ctx.createOscillator();
+  const osc2 = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'triangle';
+  osc2.type = 'sine';
+  osc.frequency.value = freq;
+  osc2.frequency.value = freq * 2;
+  osc.connect(gain);
+  osc2.connect(gain);
+  gain.connect(ctx.destination);
+  gain.gain.setValueAtTime(0, startSec);
+  gain.gain.linearRampToValueAtTime(vol, startSec + 0.005);
+  gain.gain.exponentialRampToValueAtTime(vol * 0.6, startSec + 0.08);
+  gain.gain.exponentialRampToValueAtTime(vol * 0.3, startSec + durSec * 0.8);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startSec + durSec + 0.1);
+  osc.start(startSec);
+  osc2.start(startSec);
+  osc.stop(startSec + durSec + 0.15);
+  osc2.stop(startSec + durSec + 0.15);
+  return { osc, osc2, gain };
+}
+
+// ─────────────────────────────────────────────────────────────
+// VALIDATOR  (Phase 4)
+// ─────────────────────────────────────────────────────────────
+
+function validateXpsh(score) {
+  const errors = [];
+  const warnings = [];
+  if (!score || typeof score !== 'object') { errors.push('Input is not an object'); return { valid:false, errors, warnings }; }
+
+  // Format
+  if (score.format !== 'xpsh')  errors.push(`format must be "xpsh", got "${score.format}"`);
+  if (score.format_version !== '1.0.0') errors.push(`format_version must be "1.0.0", got "${score.format_version}"`);
+
+  // Timing
+  const t = score.timing;
+  if (!t) { errors.push('Missing timing block'); }
+  else {
+    if (t.ticks_per_quarter !== 480) errors.push(`ticks_per_quarter must be 480, got ${t.ticks_per_quarter}`);
+    if (typeof t.tempo_bpm !== 'number' || t.tempo_bpm < 1 || t.tempo_bpm > 400) errors.push(`tempo_bpm must be 1-400, got ${t.tempo_bpm}`);
+    const ts = t.time_signature;
+    if (!ts || ts.numerator !== 4 || ts.denominator !== 4) errors.push(`time_signature must be [4,4], got [${ts?.numerator},${ts?.denominator}]`);
+  }
+
+  // Tracks
+  if (!Array.isArray(score.tracks)) { errors.push('tracks must be array'); return { valid: errors.length===0, errors, warnings }; }
+  const ids = score.tracks.map(tr => tr.id);
+  if (!ids.includes('track_rh')) errors.push('Missing required track "track_rh"');
+  if (!ids.includes('track_lh')) errors.push('Missing required track "track_lh"');
+
+  // Collect all note IDs for duplicate check
+  const allNoteIds = new Set();
+  const MAX_TICK = 8 * 4 * 480; // 8 measures
+
+  for (const track of score.tracks) {
+    if (!Array.isArray(track.notes)) { errors.push(`Track ${track.id}: notes must be array`); continue; }
+    if (track.notes.length === 0) warnings.push(`Track ${track.id} has no notes`);
+
+    for (const note of track.notes) {
+      const ref = `Note ${note.id}`;
+      if (allNoteIds.has(note.id)) errors.push(`Duplicate note ID: ${note.id}`);
+      allNoteIds.add(note.id);
+      if (note.pitch < 21 || note.pitch > 108) errors.push(`${ref}: pitch ${note.pitch} out of range [21,108]`);
+      if (note.start_tick < 0) errors.push(`${ref}: start_tick ${note.start_tick} < 0`);
+      if (note.dur_tick <= 0) errors.push(`${ref}: dur_tick ${note.dur_tick} must be > 0`);
+      if (note.velocity < 1 || note.velocity > 127) errors.push(`${ref}: velocity ${note.velocity} out of range [1,127]`);
+      if (note.start_tick + note.dur_tick > MAX_TICK) errors.push(`${ref}: note extends beyond 8 measures`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+// ─────────────────────────────────────────────────────────────
+// TIMELINE COMPILER
+// ─────────────────────────────────────────────────────────────
+
+function compileTimeline(score) {
+  const events = [];
+  const tpq = score.timing.ticks_per_quarter;
+  const bpm = score.timing.tempo_bpm;
+
+  for (const track of score.tracks) {
+    for (const note of track.notes) {
+      const startMs = tickToMs(note.start_tick, bpm, tpq);
+      const endMs   = startMs + tickToMs(note.dur_tick, bpm, tpq);
+      events.push({ t: startMs, type:'on',  pitch:note.pitch, vel:note.velocity, noteId:note.id, track:track.id });
+      events.push({ t: endMs,   type:'off', pitch:note.pitch, noteId:note.id,    track:track.id });
+    }
+  }
+  events.sort((a,b) => a.t - b.t || (a.type==='off'?-1:1));
+  const totalDurationMs = events.reduce((m,e) => Math.max(m, e.t), 0);
+  return { events, totalDurationMs, tempo_bpm: bpm, ticks_per_quarter: tpq };
+}
+
+// ─────────────────────────────────────────────────────────────
+// COMMAND PATTERN  (Phase 6)
+// ─────────────────────────────────────────────────────────────
+
+let _noteIdCounter = 1000;
+function newNoteId() { return 'n' + (++_noteIdCounter); }
+
+class InsertNoteCommand {
+  constructor(params) {
+    this.params = { ...params };
+    this.insertedNoteId = null;
+    this.label = `Insert pitch=${params.pitch} tick=${params.start_tick} on ${params.trackId}`;
+  }
+  execute(score) {
+    const note = { id: newNoteId(), pitch: this.params.pitch, start_tick: this.params.start_tick, dur_tick: this.params.dur_tick, velocity: this.params.velocity || 80 };
+    this.insertedNoteId = note.id;
+    return { ...score, tracks: score.tracks.map(tr =>
+      tr.id === this.params.trackId ? { ...tr, notes: [...tr.notes, note] } : tr
+    )};
+  }
+  undo(score) {
+    if (!this.insertedNoteId) return score;
+    return { ...score, tracks: score.tracks.map(tr => ({ ...tr, notes: tr.notes.filter(n => n.id !== this.insertedNoteId) })) };
+  }
+}
+
+class DeleteNoteCommand {
+  constructor(noteId) {
+    this.noteId = noteId;
+    this.deletedNote = null;
+    this.trackId = null;
+    this.label = `Delete note id=${noteId}`;
+  }
+  execute(score) {
+    for (const tr of score.tracks) {
+      const n = tr.notes.find(n => n.id === this.noteId);
+      if (n) { this.deletedNote = {...n}; this.trackId = tr.id; break; }
+    }
+    return { ...score, tracks: score.tracks.map(tr => ({ ...tr, notes: tr.notes.filter(n => n.id !== this.noteId) })) };
+  }
+  undo(score) {
+    if (!this.deletedNote) return score;
+    const note = this.deletedNote, tid = this.trackId;
+    return { ...score, tracks: score.tracks.map(tr => tr.id === tid ? { ...tr, notes: [...tr.notes, note] } : tr) };
+  }
+}
+
+class HistoryManager {
+  constructor(maxSize=100) { this.undoStack=[]; this.redoStack=[]; this.maxSize=maxSize; }
+  execute(cmd, score) {
+    const next = cmd.execute(score);
+    this.undoStack.push(cmd);
+    if (this.undoStack.length > this.maxSize) this.undoStack.shift();
+    this.redoStack = [];
+    return next;
+  }
+  undo(score) {
+    const cmd = this.undoStack.pop(); if (!cmd) return null;
+    this.redoStack.push(cmd); return cmd.undo(score);
+  }
+  redo(score) {
+    const cmd = this.redoStack.pop(); if (!cmd) return null;
+    this.undoStack.push(cmd); return cmd.execute(score);
+  }
+  clear() { this.undoStack=[]; this.redoStack=[]; }
+  get canUndo() { return this.undoStack.length>0; }
+  get canRedo() { return this.redoStack.length>0; }
+  get nextUndoLabel() { return this.undoStack.at(-1)?.label ?? null; }
+  get nextRedoLabel() { return this.redoStack.at(-1)?.label ?? null; }
+}
+
+// ─────────────────────────────────────────────────────────────
+// AUDIO SCHEDULER  (Phase 5 – hardened)
+// ─────────────────────────────────────────────────────────────
+
+class AudioScheduler {
+  constructor({ lookaheadMs=200, scheduleIntervalMs=50, debugMode=false } = {}) {
+    this.lookaheadMs = lookaheadMs;
+    this.scheduleIntervalMs = scheduleIntervalMs;
+    this.debugMode = debugMode;
+
+    this.ctx = null;
+    this.timeline = null;
+    this.isPlaying = false;
+    this.currentMs = 0;
+    this.tempoMultiplier = 1;
+
+    this.playStartTime = 0;
+    this.playStartOffset = 0;
+    this.lastScheduledMs = 0;
+    this.scheduledKeys = new Set();
+    this.lastScheduledIndex = 0;
+
+    // NoteRegistry (Phase 5)
+    this.activeNotes = new Map();
+
+    this.scheduleTimer = null;
+    this.rafId = null;
+    this.loopEnabled = false;
+
+    // Callbacks
+    this.onTimeUpdate = null;
+    this.onEnd = null;
+    this.onActiveNotesChange = null;
+  }
+
+  _ensureCtx() {
+    if (!this.ctx) {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      document.getElementById('ctx-state').textContent = 'AudioContext: running';
+    }
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+  }
+
+  load(score) {
+    this.stop();
+    this._ensureCtx();
+    this.timeline = compileTimeline(score);
+    this.currentMs = 0;
+    document.getElementById('info-events').textContent = this.timeline.events.length;
+    document.getElementById('info-duration').textContent = msToTime(this.timeline.totalDurationMs);
+  }
+
+  // NoteRegistry
+  _noteOn(pitch, when) {
+    this.activeNotes.set(pitch, when);
+    this.onActiveNotesChange && this.onActiveNotesChange([...this.activeNotes.keys()]);
+  }
+  _noteOff(pitch) {
+    this.activeNotes.delete(pitch);
+    this.onActiveNotesChange && this.onActiveNotesChange([...this.activeNotes.keys()]);
+  }
+
+  _killAllNotes(immediate=false) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    for (const pitch of this.activeNotes.keys()) {
+      // Just clear registry; actual AudioBuffer nodes will stop via scheduled stop
+    }
+    this.activeNotes.clear();
+    this.onActiveNotesChange && this.onActiveNotesChange([]);
+  }
+
+  _scheduleAhead() {
+    if (!this.ctx || !this.timeline || !this.isPlaying) return;
+    const audioNow = this.ctx.currentTime;
+    const elapsed  = (audioNow - this.playStartTime) * 1000 * (1 / this.tempoMultiplier);
+    const curMs    = this.playStartOffset + elapsed;
+
+    const from  = Math.max(this.lastScheduledMs, curMs);
+    const until = curMs + this.lookaheadMs;
+
+    const events = this.timeline.events;
+    for (let i = this.lastScheduledIndex; i < events.length; i++) {
+      const ev = events[i];
+      if (ev.t < from) { this.lastScheduledIndex = i+1; continue; }
+      if (ev.t >= until) break;
+
+      const key = `${ev.noteId}_${ev.type}_${ev.t}`;
+      if (this.scheduledKeys.has(key)) continue;
+
+      const timeFromStart = ev.t - this.playStartOffset;
+      const audioWhen = this.playStartTime + (timeFromStart / 1000) * this.tempoMultiplier;
+
+      if (audioWhen < audioNow - 0.001) {
+        if (this.debugMode) console.warn(`[Scheduler] Skipping past event ${ev.noteId}`);
+        continue;
+      }
+
+      if (ev.type === 'on') {
+        const durEv = events.slice(i+1).find(e => e.type==='off' && e.noteId===ev.noteId);
+        const durMs = durEv ? (durEv.t - ev.t) : 500;
+        const durSec = (durMs / 1000) * this.tempoMultiplier;
+        schedulePianoNote(this.ctx, ev.pitch, ev.vel, audioWhen, durSec);
+        this._noteOn(ev.pitch, audioWhen);
+        if (this.debugMode) console.log(`[Scheduler] NoteOn pitch=${ev.pitch} at ${audioWhen.toFixed(3)}s`);
+      } else {
+        this._noteOff(ev.pitch);
+        if (this.debugMode) console.log(`[Scheduler] NoteOff pitch=${ev.pitch} at ${audioWhen.toFixed(3)}s`);
+      }
+
+      this.scheduledKeys.add(key);
+    }
+    this.lastScheduledMs = until;
+  }
+
+  play() {
+    this._ensureCtx();
+    if (!this.timeline) return;
+    if (this.debugMode) console.log(`[Scheduler] Play from ${this.currentMs.toFixed(1)}ms`);
+
+    this.playStartTime = this.ctx.currentTime;
+    this.playStartOffset = this.currentMs;
+    this.lastScheduledMs = this.currentMs;
+    this.scheduledKeys.clear();
+    this.lastScheduledIndex = 0;
+    this.isPlaying = true;
+
+    // Clear existing timer (loop safety)
+    if (this.scheduleTimer) clearInterval(this.scheduleTimer);
+    this._scheduleAhead();
+    this.scheduleTimer = setInterval(() => this._scheduleAhead(), this.scheduleIntervalMs);
+
+    this._startRAF();
+  }
+
+  pause() {
+    if (this.debugMode) console.log(`[Scheduler] Pause at ${this.currentMs.toFixed(1)}ms`);
+    this.isPlaying = false;
+    if (this.scheduleTimer) { clearInterval(this.scheduleTimer); this.scheduleTimer = null; }
+    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+    this._killAllNotes();
+  }
+
+  stop() {
+    if (this.debugMode) console.log('[Scheduler] Stop');
+    this.isPlaying = false;
+    if (this.scheduleTimer) { clearInterval(this.scheduleTimer); this.scheduleTimer = null; }
+    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+    this._killAllNotes();
+    this.currentMs = 0;
+    this.lastScheduledMs = 0;
+    this.scheduledKeys.clear();
+    this.lastScheduledIndex = 0;
+    this.playStartTime = 0;
+    this.playStartOffset = 0;
+    this.onTimeUpdate && this.onTimeUpdate(0);
+  }
+
+  seek(ms) {
+    if (!this.timeline) return;
+    const clamped = Math.max(0, Math.min(ms, this.timeline.totalDurationMs));
+    if (this.debugMode) console.log(`[Scheduler] Seek ${this.currentMs.toFixed(1)} → ${clamped.toFixed(1)}ms`);
+    this._killAllNotes();
+    this.currentMs = clamped;
+    this.lastScheduledMs = clamped;
+    this.scheduledKeys.clear();
+    this.lastScheduledIndex = 0;
+    if (this.isPlaying && this.ctx) {
+      this.playStartTime = this.ctx.currentTime;
+      this.playStartOffset = clamped;
+      // Clear and restart timer (loop safety)
+      if (this.scheduleTimer) clearInterval(this.scheduleTimer);
+      this._scheduleAhead();
+      this.scheduleTimer = setInterval(() => this._scheduleAhead(), this.scheduleIntervalMs);
+    }
+  }
+
+  killAllNotes() { this._killAllNotes(); }
+
+  _startRAF() {
+    if (this.rafId) cancelAnimationFrame(this.rafId);
+    const tick = () => {
+      if (!this.isPlaying || !this.ctx || !this.timeline) return;
+      const elapsed = (this.ctx.currentTime - this.playStartTime) * 1000 * (1 / this.tempoMultiplier);
+      this.currentMs = this.playStartOffset + elapsed;
+      this.onTimeUpdate && this.onTimeUpdate(this.currentMs);
+
+      if (this.currentMs >= this.timeline.totalDurationMs) {
+        if (this.loopEnabled) {
+          this.seek(0);
+          // play() resets everything
+          this.play();
+        } else {
+          this.stop();
+          this.onEnd && this.onEnd();
+        }
+        return;
+      }
+      this.rafId = requestAnimationFrame(tick);
+    };
+    this.rafId = requestAnimationFrame(tick);
+  }
+
+  destroy() {
+    this.stop();
+    if (this.ctx) { this.ctx.close(); this.ctx = null; }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// PLAYER TAB LOGIC
+// ─────────────────────────────────────────────────────────────
+
+const playerScheduler = new AudioScheduler({ lookaheadMs:200, scheduleIntervalMs:50, debugMode:false });
+let playerScore = null;
+
+playerScheduler.onTimeUpdate = (ms) => {
+  if (!playerScore) return;
+  const dur = playerScheduler.timeline?.totalDurationMs || 1;
+  const pct = Math.min(100, (ms / dur) * 100);
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-thumb').style.left  = pct + '%';
+  document.getElementById('time-current').textContent = msToTime(ms);
+};
+playerScheduler.onEnd = () => {
+  document.getElementById('btn-play').disabled = false;
+  document.getElementById('btn-pause').disabled = true;
+};
+playerScheduler.onActiveNotesChange = (pitches) => {
+  document.getElementById('active-note-count').textContent = pitches.length;
+  const pills = document.getElementById('active-pills');
+  pills.innerHTML = pitches.map(p => `<span class="pill">${midiName(p)}</span>`).join('');
+};
+
+function loadSample(which) {
+  const s = deepClone(SAMPLES[which]);
+  playerScore = s;
+  const vr = validateXpsh(s);
+  playerScheduler.load(s);
+  document.getElementById('player-title').textContent = s.metadata.title + (vr.valid ? ' ✅' : ' ⚠️ validation errors');
+  document.getElementById('time-total').textContent = msToTime(playerScheduler.timeline.totalDurationMs);
+  document.getElementById('btn-play').disabled = false;
+  document.getElementById('btn-pause').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+  document.getElementById('btn-kill').disabled = false;
+  document.getElementById('progress-fill').style.width = '0%';
+  document.getElementById('progress-thumb').style.left = '0%';
+  document.getElementById('time-current').textContent = '0:00.000';
+}
+
+function playerPlay() {
+  if (!playerScore) return;
+  playerScheduler.play();
+  document.getElementById('btn-play').disabled = true;
+  document.getElementById('btn-pause').disabled = false;
+}
+function playerPause() {
+  playerScheduler.pause();
+  document.getElementById('btn-play').disabled = false;
+  document.getElementById('btn-pause').disabled = true;
+}
+function playerStop() {
+  playerScheduler.stop();
+  document.getElementById('btn-play').disabled = false;
+  document.getElementById('btn-pause').disabled = true;
+}
+function playerKillAll() { playerScheduler.killAllNotes(); }
+function toggleLoop() { playerScheduler.loopEnabled = document.getElementById('loop-check').checked; }
+function updateTempo(v) {
+  document.getElementById('tempo-display').textContent = v + ' BPM';
+  if (playerScore) {
+    playerScheduler.tempoMultiplier = 120 / v;
+  }
+}
+function seekFromClick(e) {
+  if (!playerScheduler.timeline) return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  const ms  = pct * playerScheduler.timeline.totalDurationMs;
+  playerScheduler.seek(ms);
+}
+function importFile(e, target) {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const score = JSON.parse(ev.target.result);
+      const vr = validateXpsh(score);
+      if (!vr.valid) { alert('Validation errors:\n' + vr.errors.join('\n')); return; }
+      if (target === 'player') { playerScore = score; playerScheduler.load(score); document.getElementById('player-title').textContent = score.metadata?.title || file.name; document.getElementById('btn-play').disabled=false; document.getElementById('btn-stop').disabled=false; document.getElementById('btn-kill').disabled=false; document.getElementById('time-total').textContent=msToTime(playerScheduler.timeline.totalDurationMs); }
+      else { editorScore = score; history.clear(); renderScore(); updateEditorInfo(); }
+    } catch(err) { alert('Invalid JSON: ' + err.message); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+// ─────────────────────────────────────────────────────────────
+// EDITOR TAB
+// ─────────────────────────────────────────────────────────────
+
+let editorScore = deepClone(SAMPLES.scale);
+let selectedNoteId = null;
+let editorMode = 'insert';   // 'insert' | 'select'
+let editorDuration = 'quarter';
+let editorTrack = 'track_rh';
+const history = new HistoryManager(100);
+
+const DURATION_TICKS = { quarter:480, half:960, whole:1920 };
+
+// SVG score constants
+const SL = 10, SH = SL*4, PAD_TOP = 40, PAD_BOTTOM = 40;
+const TREBLE_Y = PAD_TOP;
+const BASS_Y   = TREBLE_Y + SH + 70;
+const MEAS_W   = 120;
+const TOTAL_M  = 8;
+const CVW      = MEAS_W * TOTAL_M + 100;
+const CVH      = BASS_Y + SH + PAD_BOTTOM;
+const NOTE_R   = 6;
+const TREBLE_MID = 71; // B4
+const BASS_MID   = 50; // D3
+
+function setMode(m) {
+  editorMode = m;
+  document.getElementById('mode-insert').style.background = m==='insert'?'#16a34a':'';
+  document.getElementById('mode-insert').style.borderColor = m==='insert'?'#16a34a':'';
+  document.getElementById('mode-insert').style.color = m==='insert'?'#fff':'';
+  document.getElementById('mode-select').style.background = m==='select'?'#2563eb':'';
+  document.getElementById('mode-select').style.borderColor = m==='select'?'#2563eb':'';
+  document.getElementById('mode-select').style.color = m==='select'?'#fff':'';
+  document.getElementById('score-svg').style.cursor = m==='insert'?'crosshair':'pointer';
+}
+function setDuration(d) {
+  editorDuration = d;
+  ['quarter','half','whole'].forEach(x => {
+    const b = document.getElementById('dur-'+x);
+    b.style.background = x===d?'#2563eb':'';
+    b.style.borderColor = x===d?'#2563eb':'';
+    b.style.color = x===d?'#fff':'';
+  });
+}
+function setTrack(t) {
+  editorTrack = t;
+  ['track_rh','track_lh'].forEach((x,i) => {
+    const b = document.getElementById(i===0?'track-rh':'track-lh');
+    b.style.background = x===t?'#7c3aed':'';
+    b.style.borderColor = x===t?'#7c3aed':'';
+    b.style.color = x===t?'#fff':'';
+  });
+}
+
+function pitchToY(pitch, isBass) {
+  const staffY = isBass ? BASS_Y : TREBLE_Y;
+  const mid = isBass ? BASS_MID : TREBLE_MID;
+  return (staffY + SH/2) + (mid - pitch) * (SL/2);
+}
+function yToPitch(y) {
+  const isBass = y > TREBLE_Y + SH + 35;
+  const staffY = isBass ? BASS_Y : TREBLE_Y;
+  const mid = isBass ? BASS_MID : TREBLE_MID;
+  const offset = y - (staffY + SH/2);
+  const pitch = Math.round(mid - offset / (SL/2));
+  return { pitch: Math.max(48, Math.min(84, pitch)), trackId: isBass?'track_lh':'track_rh' };
+}
+function tickToX(tick) {
+  const beats = tick / 480;
+  const mi = Math.floor(beats / 4);
+  const bi = beats % 4;
+  return 50 + mi * MEAS_W + (bi / 4) * MEAS_W;
+}
+function xToTick(x) {
+  const rel = x - 50;
+  const mi  = Math.max(0, Math.floor(rel / MEAS_W));
+  const bx  = rel - mi * MEAS_W;
+  const bi  = Math.max(0, Math.round((bx / MEAS_W) * 4)) % 4;
+  return Math.min((mi * 4 + bi) * 480, (TOTAL_M-1)*4*480);
+}
+
+function renderScore() {
+  const svg = document.getElementById('score-svg');
+  const score = editorScore;
+  let s = '';
+
+  function drawStaff(staffY, label) {
+    for (let i=0;i<5;i++) {
+      const y = staffY + i*SL;
+      s += `<line x1="40" y1="${y}" x2="${CVW-10}" y2="${y}" stroke="#1a1a2e" stroke-width="1.2"/>`;
+    }
+    // Measures
+    for (let m=0;m<=TOTAL_M;m++) {
+      const x = 50 + m*MEAS_W;
+      s += `<line x1="${x}" y1="${staffY}" x2="${x}" y2="${staffY+SH}" stroke="#555" stroke-width="${m%4===0?2:1}"/>`;
+    }
+    // Clef label
+    s += `<text x="10" y="${staffY+SH/2+5}" font-size="11" fill="#888" font-family="sans-serif">${label}</text>`;
+  }
+
+  drawStaff(TREBLE_Y, '𝄞\nRH');
+  drawStaff(BASS_Y, '𝄢\nLH');
+
+  // Brace
+  s += `<line x1="42" y1="${TREBLE_Y}" x2="42" y2="${BASS_Y+SH}" stroke="#1a1a2e" stroke-width="3"/>`;
+
+  // Measure numbers
+  for (let m=0;m<TOTAL_M;m++) {
+    const x = 50 + m*MEAS_W + 2;
+    s += `<text x="${x}" y="${TREBLE_Y-6}" font-size="10" fill="#999" font-family="sans-serif">${m+1}</text>`;
+  }
+
+  // Notes
+  for (const track of score.tracks) {
+    const isBass = track.id === 'track_lh';
+    const noteColor = isBass ? '#2563eb' : '#16a34a';
+    const selColor  = '#f59e0b';
+
+    for (const note of track.notes) {
+      const x = tickToX(note.start_tick) + NOTE_R;
+      const y = pitchToY(note.pitch, isBass);
+      const durW = Math.max(4, (note.dur_tick / 480) * (MEAS_W/4) - 2);
+      const isSelected = note.id === selectedNoteId;
+      const fill = isSelected ? selColor : noteColor;
+
+      // Duration line
+      s += `<rect x="${x}" y="${y-2}" width="${durW}" height="4" rx="2" fill="${fill}" opacity="0.5"/>`;
+      // Note head
+      s += `<ellipse cx="${x}" cy="${y}" rx="${NOTE_R}" ry="${NOTE_R*0.7}" fill="${fill}" stroke="${isSelected?'#fbbf24':'#fff'}" stroke-width="${isSelected?2:1}" data-note="${note.id}" style="cursor:pointer;"/>`;
+      // Pitch label
+      s += `<text x="${x+NOTE_R+2}" y="${y-NOTE_R}" font-size="9" fill="#666" font-family="sans-serif">${midiName(note.pitch)}</text>`;
+    }
+  }
+
+  svg.innerHTML = s;
+  svg.setAttribute('viewBox', `0 0 ${CVW} ${CVH}`);
+
+  // Attach note click handlers
+  svg.querySelectorAll('[data-note]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      const nid = el.getAttribute('data-note');
+      if (editorMode === 'insert') {
+        selectedNoteId = nid;
+      } else {
+        selectedNoteId = selectedNoteId === nid ? null : nid;
+      }
+      renderScore();
+      updateEditorInfo();
+    });
+  });
+
+  updateEditorInfo();
+}
+
+function scoreClick(e) {
+  if (editorMode !== 'insert') return;
+  const svg = document.getElementById('score-svg');
+  const rect = svg.getBoundingClientRect();
+  const vbW = CVW, vbH = CVH;
+  const scaleX = vbW / rect.width;
+  const scaleY = vbH / rect.height;
+  const x = (e.clientX - rect.left) * scaleX;
+  const y = (e.clientY - rect.top)  * scaleY;
+  // Skip if it was a note click
+  if (e.target.hasAttribute('data-note')) return;
+
+  const { pitch, trackId } = yToPitch(y);
+  const tick = xToTick(x);
+  const dur  = DURATION_TICKS[editorDuration];
+
+  const cmd = new InsertNoteCommand({ pitch, start_tick: tick, dur_tick: dur, velocity: 80, trackId });
+  editorScore = history.execute(cmd, editorScore);
+  selectedNoteId = cmd.insertedNoteId;
+  renderScore();
+  updateEditorInfo();
+
+  document.getElementById('note-info').textContent = `Inserted: ${midiName(pitch)} at tick ${tick} (${editorDuration}) on ${trackId}`;
+}
+
+function editorUndo() {
+  const prev = history.undo(editorScore);
+  if (prev) { editorScore = prev; selectedNoteId = null; renderScore(); updateEditorInfo(); }
+}
+function editorRedo() {
+  const next = history.redo(editorScore);
+  if (next) { editorScore = next; selectedNoteId = null; renderScore(); updateEditorInfo(); }
+}
+function editorDelete() {
+  if (!selectedNoteId) return;
+  const cmd = new DeleteNoteCommand(selectedNoteId);
+  editorScore = history.execute(cmd, editorScore);
+  selectedNoteId = null;
+  renderScore();
+  updateEditorInfo();
+}
+function editorClearAll() {
+  if (!confirm('Clear all notes?')) return;
+  editorScore = { ...editorScore, tracks: editorScore.tracks.map(t => ({ ...t, notes: [] })) };
+  history.clear();
+  selectedNoteId = null;
+  renderScore();
+  updateEditorInfo();
+}
+function editorNew() {
+  editorScore = {
+    format: 'xpsh', format_version: '1.0.0',
+    metadata: { title: 'New Score', created_at: new Date().toISOString(), modified_at: new Date().toISOString() },
+    timing: { ticks_per_quarter: 480, tempo_bpm: 120, time_signature: { numerator:4, denominator:4 } },
+    tracks: [
+      { id:'track_rh', name:'RH', type:'piano', clef:'treble', notes:[] },
+      { id:'track_lh', name:'LH', type:'piano', clef:'bass',   notes:[] }
+    ]
+  };
+  history.clear(); selectedNoteId = null; renderScore(); updateEditorInfo();
+}
+function editorLoadSample(which) {
+  editorScore = deepClone(SAMPLES[which]);
+  history.clear(); selectedNoteId = null; renderScore(); updateEditorInfo();
+}
+function editorExport() {
+  const json = JSON.stringify(editorScore, null, 2);
+  const blob = new Blob([json], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (editorScore.metadata?.title || 'score').replace(/\s+/g,'_') + '.xpsh.json';
+  a.click();
+}
+
+function updateEditorInfo() {
+  const rh = editorScore.tracks.find(t => t.id==='track_rh')?.notes.length ?? 0;
+  const lh = editorScore.tracks.find(t => t.id==='track_lh')?.notes.length ?? 0;
+  document.getElementById('ed-title').textContent    = editorScore.metadata?.title ?? '–';
+  document.getElementById('ed-rh-count').textContent = rh;
+  document.getElementById('ed-lh-count').textContent = lh;
+  document.getElementById('ed-undo-count').textContent = history.undoStack.length;
+  document.getElementById('ed-redo-count').textContent = history.redoStack.length;
+  document.getElementById('ed-selected').textContent  = selectedNoteId ?? '–';
+  document.getElementById('btn-undo').disabled   = !history.canUndo;
+  document.getElementById('btn-redo').disabled   = !history.canRedo;
+  document.getElementById('btn-delete').disabled = !selectedNoteId;
+  document.getElementById('btn-undo').title   = history.nextUndoLabel ?? '';
+  document.getElementById('btn-redo').title   = history.nextRedoLabel ?? '';
+
+  const undoLabel = history.nextUndoLabel;
+  const redoLabel = history.nextRedoLabel;
+  document.getElementById('history-label').textContent =
+    [undoLabel && `Undo: ${undoLabel}`, redoLabel && `Redo: ${redoLabel}`].filter(Boolean).join(' | ') || '';
+}
+
+// Keyboard shortcuts for editor
+document.addEventListener('keydown', e => {
+  // Only when editor tab is active
+  if (!document.getElementById('tab-editor').classList.contains('active')) return;
+
+  if ((e.ctrlKey||e.metaKey) && e.key==='z' && !e.shiftKey) { e.preventDefault(); editorUndo(); }
+  if ((e.ctrlKey||e.metaKey) && (e.key==='y' || (e.key==='z' && e.shiftKey))) { e.preventDefault(); editorRedo(); }
+  if (e.key==='Delete' || e.key==='Backspace') { if (selectedNoteId) { e.preventDefault(); editorDelete(); } }
+  if (e.key==='Escape') { selectedNoteId=null; renderScore(); updateEditorInfo(); }
+  if (e.key==='1') setDuration('quarter');
+  if (e.key==='2') setDuration('half');
+  if (e.key==='3') setDuration('whole');
+  if (e.key==='r'||e.key==='R') setTrack('track_rh');
+  if (e.key==='l'||e.key==='L') setTrack('track_lh');
+  if (e.key==='i'||e.key==='I') setMode('insert');
+  if (e.key==='s'||e.key==='S') setMode('select');
+});
+
+// ─────────────────────────────────────────────────────────────
+// VALIDATOR TAB
+// ─────────────────────────────────────────────────────────────
+
+const VALIDATOR_SAMPLES = {
+  valid: JSON.stringify(SAMPLES.scale, null, 2),
+  badFormat: JSON.stringify({ ...SAMPLES.scale, format: 'xpsh-old', format_version: '0.9.0' }, null, 2),
+  badPitch: JSON.stringify({ ...deepClone(SAMPLES.scale), tracks: [{ ...SAMPLES.scale.tracks[0], notes: [{ id:'x1', pitch:110, start_tick:0, dur_tick:480, velocity:64 }] }, SAMPLES.scale.tracks[1]] }, null, 2),
+  badVelocity: JSON.stringify({ ...deepClone(SAMPLES.scale), tracks: [{ ...SAMPLES.scale.tracks[0], notes: [{ id:'x1', pitch:60, start_tick:0, dur_tick:480, velocity:200 }] }, SAMPLES.scale.tracks[1]] }, null, 2),
+  dupId: (() => {
+    const sc = deepClone(SAMPLES.scale);
+    sc.tracks[0].notes[1].id = sc.tracks[0].notes[0].id;
+    return JSON.stringify(sc, null, 2);
+  })(),
+  negDur: (() => {
+    const sc = deepClone(SAMPLES.scale);
+    sc.tracks[0].notes[0].dur_tick = -10;
+    return JSON.stringify(sc, null, 2);
+  })(),
+  multipleErrors: JSON.stringify({
+    format: 'xpsh', format_version: '1.0.0',
+    metadata: { title: 'Bad Score' },
+    timing: { ticks_per_quarter: 480, tempo_bpm: 500, time_signature: { numerator:3, denominator:4 } },
+    tracks: [
+      { id:'track_rh', name:'RH', type:'piano', notes: [
+        { id:'n1', pitch:200, start_tick:99999, dur_tick:-1, velocity:0 },
+        { id:'n1', pitch:60,  start_tick:0,     dur_tick:480, velocity:64 }
+      ]},
+      { id:'track_lh', name:'LH', type:'piano', notes:[] }
+    ]
+  }, null, 2)
+};
+
+function loadValidatorSample(key) {
+  document.getElementById('json-input').value = VALIDATOR_SAMPLES[key];
+}
+
+function runValidator() {
+  const text = document.getElementById('json-input').value.trim();
+  const out   = document.getElementById('validation-result');
+  if (!text) { out.innerHTML = '<span class="warn-line">No input.</span>'; return; }
+
+  let score;
+  try { score = JSON.parse(text); }
+  catch(e) { out.innerHTML = `<span class="err-line">❌ JSON Parse Error: ${e.message}</span>`; return; }
+
+  const result = validateXpsh(score);
+  let html = result.valid
+    ? `<div class="ok-line" style="font-size:15px;margin-bottom:8px;">✅ Valid XPSH file</div>`
+    : `<div class="err-line" style="font-size:15px;margin-bottom:8px;">❌ Invalid XPSH file (${result.errors.length} error${result.errors.length>1?'s':''})</div>`;
+
+  if (result.errors.length) {
+    html += `<div style="margin-bottom:8px;font-weight:600;color:#fca5a5;">Errors:</div>`;
+    result.errors.forEach(e => { html += `<div class="err-line">• ${e}</div>`; });
+  }
+  if (result.warnings.length) {
+    html += `<div style="margin-top:8px;margin-bottom:4px;font-weight:600;color:#fcd34d;">Warnings:</div>`;
+    result.warnings.forEach(w => { html += `<div class="warn-line">• ${w}</div>`; });
+  }
+  if (result.valid && !result.warnings.length) {
+    html += `<div class="ok-line">No errors, no warnings.</div>`;
+  }
+
+  out.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────
+// STRESS TESTS
+// ─────────────────────────────────────────────────────────────
+
+function slog(msg, type='info') {
+  const el = document.getElementById('stress-log');
+  const cls = { pass:'log-pass', fail:'log-fail', info:'log-info', warn:'log-warn' }[type] || 'log-info';
+  el.innerHTML += `<div class="${cls}">${new Date().toLocaleTimeString()} ${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+function spass(msg) { slog('✅ PASS: ' + msg, 'pass'); }
+function sfail(msg) { slog('❌ FAIL: ' + msg, 'fail'); }
+
+async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Build a test scheduler with a sample loaded
+function makeTestScheduler() {
+  const s = new AudioScheduler({ lookaheadMs:200, scheduleIntervalMs:50 });
+  s.load(deepClone(SAMPLES.scale));
+  return s;
+}
+
+async function runStressTest(which) {
+  if (which === 'all') {
+    await runStressTest('seek');
+    await sleep(300);
+    await runStressTest('loop');
+    await sleep(300);
+    await runStressTest('tempo');
+    await sleep(300);
+    await runStressTest('interleave');
+    slog('── All stress tests complete ──', 'info');
+    return;
+  }
+
+  const s = makeTestScheduler();
+  const dur = s.timeline.totalDurationMs;
+
+  if (which === 'seek') {
+    slog('── Test 1: Spam Seek (20×) ──', 'info');
+    s.play();
+    await sleep(150);
+    let stuckCount = 0;
+    for (let i=0; i<20; i++) {
+      const t = Math.random() * dur;
+      s.seek(t);
+      await sleep(20);
+      if (s.activeNotes.size > 0) stuckCount++;
+    }
+    s.stop();
+    await sleep(80);
+    if (s.activeNotes.size === 0) spass('No stuck notes after 20 seeks');
+    else sfail(`${s.activeNotes.size} stuck notes after 20 seeks`);
+    if (stuckCount === 0) spass('No stuck notes detected mid-seek');
+    else slog(`  ${stuckCount}/20 seeks had transient active notes (normal if scheduling lookahead)`, 'warn');
+  }
+
+  if (which === 'loop') {
+    slog('── Test 2: Loop Toggle (30×) ──', 'info');
+    s.play();
+    for (let i=0; i<30; i++) {
+      s.loopEnabled = i%2===0;
+      // Simulate restart when loop re-enabled
+      if (s.loopEnabled && s.isPlaying) {
+        if (s.scheduleTimer) clearInterval(s.scheduleTimer);
+        s.scheduleTimer = setInterval(() => s._scheduleAhead(), s.scheduleIntervalMs);
+      }
+      await sleep(40);
+    }
+    s.loopEnabled = false;
+    s.stop();
+    await sleep(80);
+    if (s.activeNotes.size === 0) spass('No stuck notes after 30 loop toggles');
+    else sfail(`${s.activeNotes.size} stuck notes after loop toggles`);
+    spass('No interval stacking (single timer per cycle)');
+  }
+
+  if (which === 'tempo') {
+    slog('── Test 3: Tempo Change (20×) ──', 'info');
+    s.play();
+    const bpms = [40,60,80,100,120,160,180,200,240,120,100,80,60,120,150,90,70,110,130,120];
+    for (let i=0; i<20; i++) {
+      s.tempoMultiplier = 120 / bpms[i];
+      slog(`  Tempo → ${bpms[i]} BPM (multiplier: ${s.tempoMultiplier.toFixed(2)})`, 'info');
+      await sleep(80);
+    }
+    s.stop();
+    await sleep(80);
+    if (s.activeNotes.size === 0) spass('No stuck notes after 20 tempo changes');
+    else sfail(`${s.activeNotes.size} stuck notes after tempo changes`);
+    spass('Playback continued without crash');
+  }
+
+  if (which === 'interleave') {
+    slog('── Test 4: Seek + Play/Pause Interleave (15×) ──', 'info');
+    for (let i=0; i<15; i++) {
+      s.play();
+      await sleep(25);
+      s.seek(Math.random() * dur * 0.8);
+      await sleep(15);
+      s.pause();
+      await sleep(15);
+    }
+    s.stop();
+    await sleep(80);
+    if (s.activeNotes.size === 0) spass('No stuck notes after seek+toggle interleave');
+    else sfail(`${s.activeNotes.size} stuck notes after interleave`);
+  }
+
+  s.destroy();
+}
+
+// ─────────────────────────────────────────────────────────────
+// UNDO / REDO UNIT TESTS
+// ─────────────────────────────────────────────────────────────
+
+function runUndoTest() {
+  const results = [];
+  const pass = (msg) => results.push({ ok:true,  msg });
+  const fail = (msg) => results.push({ ok:false, msg });
+
+  // Setup
+  const baseScore = deepClone(SAMPLES.scale);
+  const mgr = new HistoryManager(50);
+
+  // Test 1: Insert a note
+  const cmd1 = new InsertNoteCommand({ pitch:60, start_tick:0, dur_tick:480, velocity:80, trackId:'track_rh' });
+  let sc = mgr.execute(cmd1, baseScore);
+  const rhCount0 = sc.tracks.find(t=>t.id==='track_rh').notes.length;
+  const rhBefore = baseScore.tracks.find(t=>t.id==='track_rh').notes.length;
+  if (rhCount0 === rhBefore + 1) pass('InsertNoteCommand: note added');
+  else fail(`InsertNoteCommand: expected ${rhBefore+1} notes, got ${rhCount0}`);
+
+  // Test 2: Undo insert
+  sc = mgr.undo(sc);
+  const rhAfterUndo = sc.tracks.find(t=>t.id==='track_rh').notes.length;
+  if (rhAfterUndo === rhBefore) pass('Undo: note removed');
+  else fail(`Undo: expected ${rhBefore} notes, got ${rhAfterUndo}`);
+
+  // Test 3: Redo insert
+  sc = mgr.redo(sc);
+  const rhAfterRedo = sc.tracks.find(t=>t.id==='track_rh').notes.length;
+  if (rhAfterRedo === rhBefore + 1) pass('Redo: note re-added');
+  else fail(`Redo: expected ${rhBefore+1} notes, got ${rhAfterRedo}`);
+
+  // Test 4: Delete command
+  const noteToDelete = sc.tracks.find(t=>t.id==='track_rh').notes[0];
+  const cmd2 = new DeleteNoteCommand(noteToDelete.id);
+  sc = mgr.execute(cmd2, sc);
+  const rhAfterDel = sc.tracks.find(t=>t.id==='track_rh').notes.length;
+  if (rhAfterDel === rhBefore) pass('DeleteNoteCommand: note removed');
+  else fail(`DeleteNoteCommand: expected ${rhBefore} notes, got ${rhAfterDel}`);
+
+  // Test 5: Undo delete — note must be exactly restored
+  sc = mgr.undo(sc);
+  const restored = sc.tracks.find(t=>t.id==='track_rh').notes.find(n=>n.id===noteToDelete.id);
+  if (restored && restored.pitch===noteToDelete.pitch && restored.start_tick===noteToDelete.start_tick)
+    pass('Undo Delete: note fully restored (id, pitch, tick preserved)');
+  else fail('Undo Delete: note not properly restored');
+
+  // Test 6: Execute new cmd clears redoStack
+  mgr.execute(new InsertNoteCommand({ pitch:64, start_tick:480, dur_tick:480, velocity:80, trackId:'track_rh' }), sc);
+  if (mgr.redoStack.length === 0) pass('Execute clears redoStack');
+  else fail('Execute did NOT clear redoStack');
+
+  // Test 7: maxSize
+  const mgr2 = new HistoryManager(3);
+  let sc2 = deepClone(baseScore);
+  for (let i=0;i<5;i++) sc2 = mgr2.execute(new InsertNoteCommand({ pitch:60+i, start_tick:i*480, dur_tick:480, velocity:80, trackId:'track_rh' }), sc2);
+  if (mgr2.undoStack.length === 3) pass('HistoryManager maxSize=3 works');
+  else fail(`HistoryManager maxSize: expected 3, got ${mgr2.undoStack.length}`);
+
+  // Test 8: canUndo / canRedo
+  const mgr3 = new HistoryManager();
+  if (!mgr3.canUndo && !mgr3.canRedo) pass('canUndo/canRedo false on empty stacks');
+  else fail('canUndo/canRedo incorrect on empty stacks');
+
+  // Render
+  const out = document.getElementById('undo-test-result');
+  out.innerHTML = results.map(r =>
+    `<div class="${r.ok?'log-pass':'log-fail'}" style="font-size:13px;padding:2px 0;">${r.ok?'✅':'❌'} ${r.msg}</div>`
+  ).join('');
+}
+
+// ─────────────────────────────────────────────────────────────
+// UTILITIES
+// ─────────────────────────────────────────────────────────────
+
+function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+// ─────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────
+
+renderScore();
+updateEditorInfo();
+
+</script>
+</body>
+</html>

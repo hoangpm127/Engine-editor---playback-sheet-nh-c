@@ -1,0 +1,65 @@
+{
+  "format_version": "1.0.0",
+  "metadata": {
+    "title": "Two Hands Sample",
+    "composer": "",
+    "arranger": "",
+    "copyright": "",
+    "created_at": "2026-02-15T00:00:00Z",
+    "modified_at": "2026-02-15T00:00:00Z"
+  },
+  "timing": {
+    "ticks_per_quarter": 480,
+    "tempo_bpm": 120,
+    "time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    }
+  },
+  "tracks": [
+    {
+      "id": "track_rh",
+      "name": "RH",
+      "type": "piano",
+      "clef": "treble",
+      "notes": [
+        {
+          "id": "n1",
+          "pitch": 60,
+          "start_tick": 0,
+          "dur_tick": 480,
+          "velocity": 64
+        },
+        {
+          "id": "n2",
+          "pitch": 64,
+          "start_tick": 0,
+          "dur_tick": 480,
+          "velocity": 64
+        },
+        {
+          "id": "n3",
+          "pitch": 67,
+          "start_tick": 0,
+          "dur_tick": 480,
+          "velocity": 64
+        }
+      ]
+    },
+    {
+      "id": "track_lh",
+      "name": "LH",
+      "type": "piano",
+      "clef": "bass",
+      "notes": [
+        {
+          "id": "n4",
+          "pitch": 48,
+          "start_tick": 0,
+          "dur_tick": 1920,
+          "velocity": 64
+        }
+      ]
+    }
+  ]
+}

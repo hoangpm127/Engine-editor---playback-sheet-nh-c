@@ -1,0 +1,92 @@
+{
+  "format_version": "1.0.0",
+  "metadata": {
+    "title": "C Major Scale - Simple",
+    "composer": "",
+    "arranger": "",
+    "copyright": "",
+    "created_at": "2026-02-15T00:00:00Z",
+    "modified_at": "2026-02-15T00:00:00Z"
+  },
+  "timing": {
+    "ticks_per_quarter": 480,
+    "tempo_bpm": 120,
+    "time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    }
+  },
+  "tracks": [
+    {
+      "id": "track_rh",
+      "name": "RH",
+      "type": "piano",
+      "clef": "treble",
+      "notes": [
+        {
+          "id": "n1",
+          "pitch": 60,
+          "start_tick": 0,
+          "dur_tick": 480,
+          "velocity": 64
+        },
+        {
+          "id": "n2",
+          "pitch": 62,
+          "start_tick": 480,
+          "dur_tick": 480,
+          "velocity": 64
+        },
+        {
+          "id": "n3",
+          "pitch": 64,
+          "start_tick": 960,
+          "dur_tick": 480,
+          "velocity": 64
+        },
+        {
+          "id": "n4",
+          "pitch": 65,
+          "start_tick": 1440,
+          "dur_tick": 480,
+          "velocity": 64
+        },
+        {
+          "id": "n5",
+          "pitch": 67,
+          "start_tick": 1920,
+          "dur_tick": 480,
+          "velocity": 64
+        },
+        {
+          "id": "n6",
+          "pitch": 69,
+          "start_tick": 2400,
+          "dur_tick": 480,
+          "velocity": 64
+        },
+        {
+          "id": "n7",
+          "pitch": 71,
+          "start_tick": 2880,
+          "dur_tick": 480,
+          "velocity": 64
+        },
+        {
+          "id": "n8",
+          "pitch": 72,
+          "start_tick": 3360,
+          "dur_tick": 480,
+          "velocity": 64
+        }
+      ]
+    },
+    {
+      "id": "track_lh",
+      "name": "LH",
+      "type": "piano",
+      "clef": "bass",
+      "notes": []
+    }
+  ]
+}
