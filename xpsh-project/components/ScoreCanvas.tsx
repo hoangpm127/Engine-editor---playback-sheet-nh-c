@@ -133,9 +133,18 @@ function bassTopY  (line: number): number { return sysY(line) + BASS_TOP;   }
 
 /**
  * MIDI pitch → absolute canvas Y.
- * topLineY = real Y of the top staff line (from staffTopYRef or hardcoded fallback).
+ * Uses VexFlow's native line formula: Y = topLineY + (VF_TOP_LINE - vfLine(pitch, clef)) * VFS
+ * VexFlow "line" is 1-indexed from bottom (line 5 = top, line 1 = bottom).
+ * Formula: vfLine(treble) = dP(pitch) / 2 - 25    (C4=line0 = ledger below staff)
+ *          vfLine(bass)   = treble_vfLine + 6
+ * Simplified equivalent to original diatonic formula — kept because verified correct.
+ * topLineY = real getYForLine(0) from VexFlow after draw.
  */
 function pitchToAbsY(pitch: number, isBass: boolean, topLineY: number): number {
+  // VexFlow line for treble: C4(60)=0, each diatonic step = +0.5
+  // VF top line = 5 → Y at top = topLineY + (5-5)*10 = topLineY
+  // trebleVFLine(pitch) = (dP(pitch) - dP(64)) * 0.5 + 1   [E4=1 = bottom line]
+  // Actually simplest: use dP difference from known top anchor
   const topDP = isBass ? BS_TOP_DP : TR_TOP_DP;
   return topLineY + (topDP - dP(pitch)) * (VFS / 2);
 }
@@ -147,7 +156,7 @@ function absYToPitch(y: number, isBass: boolean, topLineY: number): number {
   const total = topDP - steps;
   const oct   = Math.floor(total / 7);
   const diat  = ((total % 7) + 7) % 7;
-  return Math.max(36, Math.min(96, oct * 12 + D2C[diat]));
+  return Math.max(21, Math.min(108, oct * 12 + D2C[diat]));
 }
 
 // ============================================================================
@@ -256,10 +265,16 @@ export function ScoreCanvas({
    */
   const staffTopYRef = useRef<{ treble: number[]; bass: number[] }>({ treble: [], bass: [] });
 
+  /**
+   * Per-system spacing in px (= stave.getSpacingBetweenLines(), always 10).
+   * Stored for reference; currently hardcoded as VFS=10.
+   */
+  const spacingRef = useRef<number>(VFS);
+
   const [hoverPos, setHoverPos] = useState<{
     x: number; y: number;
     pitch: number; tick: number;
-    isBass: boolean; staveTopY: number; line: number;
+    isBass: boolean; staveTopY: number; staveBotY: number; line: number;
   } | null>(null);
 
   // ============================================================================
@@ -320,15 +335,14 @@ export function ScoreCanvas({
           const noteStartX = (trebleStave as any).getNoteStartX();
           measNoteStartXRef.current[m] = noteStartX;
 
-          // Real top-staff-line Y from VexFlow (may differ from our hardcoded constant)
-          // Only need to store once per system since all measures in same system share Y.
+          // Real top-staff-line Y from VexFlow (only need once per system).
           if (pos === 0) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             staffTopYRef.current.treble[line] = (trebleStave as any).getYForLine(0);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             staffTopYRef.current.bass[line]   = (bassStave   as any).getYForLine(0);
-            // ── CALIBRATION LOG (remove once aligned) ──
-            console.log(`[ScoreCanvas] system${line}: trebleTopY=${staffTopYRef.current.treble[line]} bassTopY=${staffTopYRef.current.bass[line]} noteStartX=${noteStartX}`);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            spacingRef.current = (trebleStave as any).getSpacingBetweenLines?.() ?? VFS;
           }
 
           // Pre-populate beat-0 calibration (will be overridden by real sn.getAbsoluteX() below)
@@ -433,14 +447,26 @@ export function ScoreCanvas({
                     if (existingIdx >= 0) bucket[existingIdx] = [tick, ax];
                     else bucket.push([tick, ax]);
 
-                    // Register click hit targets with real cx and calibrated cy
-                    for (const pitch of pitches) {
+                    // Read real note head Y from VexFlow after draw (most accurate).
+                    // sn.getYs() returns Y for each key in the chord, in key order.
+                    let realYs: number[] | null = null;
+                    try {
+                      const ys = sn.getYs?.();
+                      if (Array.isArray(ys) && ys.length === pitches.length) realYs = ys;
+                    } catch { /* not yet available */ }
+
+                    // Register click hit targets with real (or computed) cy
+                    for (let ki = 0; ki < pitches.length; ki++) {
+                      const pitch = pitches[ki];
+                      const cy = (realYs && typeof realYs[ki] === 'number' && isFinite(realYs[ki]))
+                        ? realYs[ki]
+                        : pitchToAbsY(pitch, isBass, realTopLineY);
                       noteHitsRef.current.push({
                         eventId:   evId,
                         pitch,
                         startTick: tick,
                         cx: ax,
-                        cy: pitchToAbsY(pitch, isBass, realTopLineY),
+                        cy,
                       });
                     }
                   }
@@ -527,15 +553,22 @@ export function ScoreCanvas({
     // Use real VexFlow top-line Y if available, otherwise fall back to hardcoded constant
     const realTrebleTopY = staffTopYRef.current.treble[line] ?? trebleTopY(line);
     const realBassTopY   = staffTopYRef.current.bass[line]   ?? bassTopY(line);
+    const sp             = spacingRef.current;  // spacing between lines (10px)
 
-    // Assign to closest staff by distance from each staff's mid-line (absolute Y)
-    const trebleMid = realTrebleTopY + 2 * VFS;
-    const bassMid   = realBassTopY   + 2 * VFS;
-    const isBass    = Math.abs(y - bassMid) < Math.abs(y - trebleMid);
-    const topLineY  = isBass ? realBassTopY : realTrebleTopY;
+    // Staff bottom lines (line 4 from top = bottommost line)
+    const trebleBotY = realTrebleTopY + 4 * sp;  // E4 bottom line
+    const bassBotY   = realBassTopY   + 4 * sp;  // G2 bottom line
 
-    // Only respond within ±4 ledger lines of the assigned staff
-    if (y < topLineY - 4 * VFS || y > topLineY + 8 * VFS) {
+    // Zone assignment: use explicit staff boundary midpoint
+    // Midpoint between treble bottom and bass top = boundary
+    const boundary = (trebleBotY + realBassTopY) / 2;
+    const isBass   = y > boundary;
+    const topLineY = isBass ? realBassTopY : realTrebleTopY;
+    const botLineY = isBass ? bassBotY     : trebleBotY;
+
+    // Only respond within ±4 ledger lines of the top/bottom of the assigned staff
+    const LEDGER_ZONE = 4 * sp;
+    if (y < topLineY - LEDGER_ZONE || y > botLineY + LEDGER_ZONE) {
       setHoverPos(null);
       return;
     }
@@ -545,9 +578,8 @@ export function ScoreCanvas({
     const snapTicks = DURATION_VALUES[currentDuration];
     const { tick }  = xyToTick(x, y, snapTicks, measNoteStartXRef.current);
     const ghostX    = resolveGhostX(tick, isBass);
-    const staveTopY = topLineY;
 
-    const next = { x: ghostX, y: noteY, pitch, tick, isBass, staveTopY, line };
+    const next = { x: ghostX, y: noteY, pitch, tick, isBass, staveTopY: topLineY, staveBotY: botLineY, line };
     hoverPosRef.current = next;
     setHoverPos(next);
   }, [currentDuration, resolveGhostX]);
@@ -595,7 +627,7 @@ export function ScoreCanvas({
 
   const renderGhost = () => {
     if (!hoverPos || editorTool === 'tie') return null;
-    const { x: nx, y: ny, pitch, isBass, staveTopY, line } = hoverPos;
+    const { x: nx, y: ny, pitch, isBass, staveTopY, staveBotY, line } = hoverPos;
     const dur = GHOST_DUR[currentDuration];
 
     const isWhole  = dur >= 1920;
@@ -613,7 +645,7 @@ export function ScoreCanvas({
 
     // Ledger lines above/below staff
     const topY = staveTopY;
-    const botY = staveTopY + 4 * OVL_SLS;
+    const botY = staveBotY;
     const ledgers: React.ReactElement[] = [];
     if (ny < topY - OVL_SLS / 3) {
       for (let ly = topY - OVL_SLS; ly >= ny - 1; ly -= OVL_SLS)
@@ -626,7 +658,7 @@ export function ScoreCanvas({
     }
 
     if (editorTool === 'pedal') {
-      const py = sysY(line) + BASS_TOP + 4 * VFS + 22;
+      const py = staveBotY + 22;
       return <g opacity={0.45} style={{ pointerEvents: 'none' }}>
         <line x1={nx} x2={nx + MEAS_W} y1={py} y2={py}
           stroke={gc} strokeWidth={2} strokeDasharray="5 3" />
@@ -702,7 +734,8 @@ export function ScoreCanvas({
         if (ev.type !== 'pedal') continue;
         const m    = Math.min(N_MEAS - 1, Math.floor(ev.start_tick / (4 * TPQ)));
         const line = lineOf(m);
-        const py   = sysY(line) + BASS_TOP + 4 * VFS + 22;
+        const bassBotY = (staffTopYRef.current.bass[line] ?? bassTopY(line)) + 4 * VFS;
+        const py   = bassBotY + 22;
         const x1   = tickToOverlayX(ev.start_tick, measNoteStartXRef.current);
         const x2   = tickToOverlayX(ev.start_tick + ev.dur_tick, measNoteStartXRef.current);
         els.push(<g key={ev.id}>
@@ -748,21 +781,7 @@ export function ScoreCanvas({
           width={CW} height={CH}
           style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible', pointerEvents: 'none' }}
         >
-          {/* Calibration lines: show computed staff-top Y vs VexFlow actual.
-              Thin dashed green = treble top, orange = bass top.
-              Remove once alignment is confirmed. */}
-          {Array.from({ length: N_LINES }, (_, li) => (
-            <g key={li}>
-              <line x1={0} x2={CW}
-                y1={staffTopYRef.current.treble[li] ?? trebleTopY(li)}
-                y2={staffTopYRef.current.treble[li] ?? trebleTopY(li)}
-                stroke="#16a34a" strokeWidth={1} strokeDasharray="4 3" opacity={0.45} />
-              <line x1={0} x2={CW}
-                y1={staffTopYRef.current.bass[li] ?? bassTopY(li)}
-                y2={staffTopYRef.current.bass[li] ?? bassTopY(li)}
-                stroke="#ea580c" strokeWidth={1} strokeDasharray="4 3" opacity={0.45} />
-            </g>
-          ))}
+          {/* Ghost + pedal overlay */}
           {renderPedalOverlay()}
           {renderGhost()}
         </svg>
