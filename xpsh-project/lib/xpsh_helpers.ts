@@ -126,22 +126,28 @@ export interface XPSHScore {
 
 /**
  * Returns unified event list from a track regardless of format version.
- * v1.0 notes are wrapped as single-pitch chord events.
+ * v1.0 notes[] are wrapped as single-pitch chord events and MERGED with v1.1 events[].
+ * This ensures inserting new events into a v1.0 track never hides the original notes.
  */
 export function getTrackEvents(track: XPSHTrack): XPSHEvent[] {
-  if (track.events && track.events.length > 0) return track.events;
-  if (track.notes && track.notes.length > 0) {
-    return track.notes.map(n => ({
-      id: n.id,
-      start_tick: n.start_tick,
-      dur_tick: n.dur_tick,
-      voice: 1 as const,
-      type: 'chord' as const,
-      pitches: [n.pitch],
-      velocity: n.velocity
-    }));
-  }
-  return [];
+  const fromEvents: XPSHEvent[] = track.events ?? [];
+  const fromNotes: XPSHEvent[]  = (track.notes ?? []).map(n => ({
+    id:         n.id,
+    start_tick: n.start_tick,
+    dur_tick:   n.dur_tick,
+    voice:      1 as const,
+    type:       'chord' as const,
+    pitches:    [n.pitch],
+    velocity:   n.velocity,
+    accidentals: [],
+  }));
+
+  if (fromNotes.length === 0) return fromEvents;
+  if (fromEvents.length === 0) return fromNotes;
+
+  // Both exist (v1.0 score with new v1.1 inserts): merge, deduplicate by id
+  const evIds = new Set(fromEvents.map(e => e.id));
+  return [...fromEvents, ...fromNotes.filter(n => !evIds.has(n.id))];
 }
 
 /**
