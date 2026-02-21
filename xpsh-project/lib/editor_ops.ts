@@ -386,6 +386,63 @@ export function deleteEvent(score: XPSHScore, eventId: string): XPSHScore {
 }
 
 /**
+ * Move a note/event to a new tick and/or pitch, optionally across tracks.
+ * Supports both v1.0 (notes[]) and v1.1 (events[]) storage.
+ */
+export function moveEvent(
+  score: XPSHScore,
+  eventId: string,
+  newStartTick: number,
+  newPitches: number[],
+  prevTrackId: string,
+  newTrackId: string,
+): XPSHScore {
+  if (newTrackId === prevTrackId) {
+    return {
+      ...score,
+      tracks: score.tracks.map(track => ({
+        ...track,
+        events: (track.events ?? []).map(ev =>
+          ev.id !== eventId ? ev : { ...ev, start_tick: newStartTick, pitches: newPitches }
+        ),
+        notes: (track.notes ?? []).map(n =>
+          n.id !== eventId ? n : { ...n, start_tick: newStartTick, pitch: newPitches[0] ?? n.pitch }
+        ),
+      })),
+    };
+  }
+  // Cross-track: lift event out of old track, drop into new track
+  let movedEv: XPSHEvent | null = null;
+  let movedNote: XPSHNote | null = null;
+  const step1: XPSHScore = {
+    ...score,
+    tracks: score.tracks.map(track => {
+      if (track.id !== prevTrackId) return track;
+      const ev = (track.events ?? []).find(e => e.id === eventId);
+      if (ev) movedEv = { ...ev, start_tick: newStartTick, pitches: newPitches, voice: 1 as const };
+      const n = (track.notes ?? []).find(n2 => n2.id === eventId);
+      if (n) movedNote = { ...n, start_tick: newStartTick, pitch: newPitches[0] ?? n.pitch };
+      return {
+        ...track,
+        events: (track.events ?? []).filter(e => e.id !== eventId),
+        notes:  (track.notes  ?? []).filter(n2 => n2.id !== eventId),
+      };
+    }),
+  };
+  return {
+    ...step1,
+    tracks: step1.tracks.map(track => {
+      if (track.id !== newTrackId) return track;
+      return {
+        ...track,
+        events: movedEv  ? [...(track.events ?? []), movedEv]  : (track.events ?? []),
+        notes:  movedNote ? [...(track.notes  ?? []), movedNote] : (track.notes  ?? []),
+      };
+    }),
+  };
+}
+
+/**
  * Find event by id across all tracks.
  */
 export function findEventById(
@@ -623,5 +680,51 @@ export function getEventsInTickRange(
   return (track.events ?? []).filter(ev =>
     ev.start_tick >= startTick && ev.start_tick < endTick
   );
+}
+
+// ============================================================================
+// Annotation helpers (dynamic, articulation, fingering)
+// ============================================================================
+
+/** Set / clear dynamic on an event. Pass null to remove. */
+export function setEventDynamic(score: XPSHScore, eventId: string, dynamic: string | null): XPSHScore {
+  return updateEvent(score, eventId, { dynamic: dynamic ?? undefined });
+}
+
+/** Toggle one articulation symbol on an event. */
+export function toggleEventArticulation(score: XPSHScore, eventId: string, articulation: string): XPSHScore {
+  const found = findEventById(score, eventId);
+  if (!found) return score;
+  const existing = found.event.articulations ?? [];
+  const next = existing.includes(articulation)
+    ? existing.filter(a => a !== articulation)
+    : [...existing, articulation];
+  return updateEvent(score, eventId, { articulations: next.length > 0 ? next : undefined });
+}
+
+/** Set fingering array (parallel to pitches[]). */
+export function setEventFingering(score: XPSHScore, eventId: string, fingering: number[]): XPSHScore {
+  return updateEvent(score, eventId, { fingering });
+}
+
+// ============================================================================
+// Score-level meta setters (key sig, time sig)
+// ============================================================================
+
+const KEY_SIG_STRINGS: Record<number, string> = {
+  0: 'C', 1: 'G', 2: 'D', 3: 'A', 4: 'E', 5: 'B', 6: 'F#', 7: 'C#',
+  [-1]: 'F', [-2]: 'Bb', [-3]: 'Eb', [-4]: 'Ab', [-5]: 'Db', [-6]: 'Gb', [-7]: 'Cb',
+};
+export { KEY_SIG_STRINGS };
+
+export function setScoreKeySig(score: XPSHScore, keySig: number): XPSHScore {
+  return { ...score, timing: { ...score.timing, key_sig: keySig } };
+}
+
+export function setScoreTimeSig(score: XPSHScore, timeSig: string): XPSHScore {
+  const parts = timeSig.split('/');
+  const numerator = parseInt(parts[0] ?? '4', 10);
+  const denominator = parseInt(parts[1] ?? '4', 10);
+  return { ...score, timing: { ...score.timing, time_signature: { numerator, denominator } } };
 }
 

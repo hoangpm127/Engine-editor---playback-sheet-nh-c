@@ -6,7 +6,10 @@
 import { XPSHScore, XPSHNote, XPSHTrack, XPSHEvent, AccidentalType } from './xpsh_helpers';
 import {
   insertNote, deleteNote, InsertNoteParams,
-  insertEvent, deleteEvent, findEventById, setAccidental, addTie, addPedalRange, applyTripletGroup,
+  insertEvent, deleteEvent, findEventById, moveEvent,
+  setAccidental, addTie, addPedalRange, applyTripletGroup,
+  setEventDynamic, toggleEventArticulation, setEventFingering,
+  setScoreKeySig, setScoreTimeSig,
   InsertEventParams, VoiceNumber
 } from './editor_ops';
 
@@ -205,8 +208,52 @@ export class DeleteEventCommand implements Command {
 }
 
 // ============================================================================
-// v1.1 SetAccidentalCommand
+// v1.1 MoveEventCommand
 // ============================================================================
+
+/**
+ * Move a chord event to a new tick / pitch (supports cross-track drag).
+ * Fully undo-able.
+ */
+export class MoveEventCommand implements Command {
+  readonly label: string;
+  private readonly eventId: string;
+  private readonly newStartTick: number;
+  private readonly newPitches: number[];
+  private readonly newTrackId: string;
+  private prevStartTick = 0;
+  private prevPitches: number[] = [];
+  private prevTrackId = '';
+
+  constructor(eventId: string, newStartTick: number, newPitches: number[], newTrackId: string) {
+    this.eventId = eventId;
+    this.newStartTick = newStartTick;
+    this.newPitches = newPitches;
+    this.newTrackId = newTrackId;
+    this.label = `Move event ${eventId} → tick=${newStartTick} pitches=[${newPitches}] track=${newTrackId}`;
+  }
+
+  execute(score: XPSHScore): XPSHScore {
+    const found = findEventById(score, this.eventId);
+    if (found) {
+      this.prevStartTick = found.event.start_tick;
+      this.prevPitches   = found.event.pitches ? [...found.event.pitches] : [];
+      this.prevTrackId   = found.trackId;
+    } else {
+      // v1.0 note fallback
+      for (const track of score.tracks) {
+        const n = (track.notes ?? []).find(n2 => n2.id === this.eventId);
+        if (n) { this.prevStartTick = n.start_tick; this.prevPitches = [n.pitch]; this.prevTrackId = track.id; break; }
+      }
+    }
+    return moveEvent(score, this.eventId, this.newStartTick, this.newPitches, this.prevTrackId, this.newTrackId);
+  }
+
+  undo(score: XPSHScore): XPSHScore {
+    return moveEvent(score, this.eventId, this.prevStartTick, this.prevPitches, this.newTrackId, this.prevTrackId);
+  }
+}
+
 
 export class SetAccidentalCommand implements Command {
   readonly label: string;
@@ -233,5 +280,115 @@ export class SetAccidentalCommand implements Command {
 
   undo(score: XPSHScore): XPSHScore {
     return setAccidental(score, this.eventId, this.pitch, this.prevAcc);
+  }
+}
+
+// ============================================================================
+// SetDynamicCommand
+// ============================================================================
+
+export class SetDynamicCommand implements Command {
+  readonly label: string;
+  private readonly eventId: string;
+  private readonly newDynamic: string | null;
+  private prevDynamic: string | null = null;
+
+  constructor(eventId: string, dynamic: string | null) {
+    this.eventId = eventId;
+    this.newDynamic = dynamic;
+    this.label = `Set dynamic ${dynamic ?? 'none'} on event ${eventId}`;
+  }
+
+  execute(score: XPSHScore): XPSHScore {
+    const found = findEventById(score, this.eventId);
+    this.prevDynamic = found?.event.dynamic ?? null;
+    return setEventDynamic(score, this.eventId, this.newDynamic);
+  }
+
+  undo(score: XPSHScore): XPSHScore {
+    return setEventDynamic(score, this.eventId, this.prevDynamic);
+  }
+}
+
+// ============================================================================
+// ToggleArticulationCommand
+// ============================================================================
+
+export class ToggleArticulationCommand implements Command {
+  readonly label: string;
+  private readonly eventId: string;
+  private readonly articulation: string;
+
+  constructor(eventId: string, articulation: string) {
+    this.eventId = eventId;
+    this.articulation = articulation;
+    this.label = `Toggle articulation ${articulation} on event ${eventId}`;
+  }
+
+  execute(score: XPSHScore): XPSHScore {
+    return toggleEventArticulation(score, this.eventId, this.articulation);
+  }
+
+  undo(score: XPSHScore): XPSHScore {
+    // Toggling is its own inverse
+    return toggleEventArticulation(score, this.eventId, this.articulation);
+  }
+}
+
+// ============================================================================
+// SetFingeringCommand
+// ============================================================================
+
+export class SetFingeringCommand implements Command {
+  readonly label: string;
+  private readonly eventId: string;
+  private readonly newFingering: number[];
+  private prevFingering: number[] = [];
+
+  constructor(eventId: string, fingering: number[]) {
+    this.eventId = eventId;
+    this.newFingering = fingering;
+    this.label = `Set fingering [${fingering}] on event ${eventId}`;
+  }
+
+  execute(score: XPSHScore): XPSHScore {
+    const found = findEventById(score, this.eventId);
+    this.prevFingering = found?.event.fingering ?? [];
+    return setEventFingering(score, this.eventId, this.newFingering);
+  }
+
+  undo(score: XPSHScore): XPSHScore {
+    return setEventFingering(score, this.eventId, this.prevFingering);
+  }
+}
+
+// ============================================================================
+// SetScoreMetaCommand (key sig / time sig)
+// ============================================================================
+
+export class SetScoreMetaCommand implements Command {
+  readonly label: string;
+  private readonly type: 'keySig' | 'timeSig';
+  private readonly newVal: number | string;
+  private prevKeySig = 0;
+  private prevTimeSig = '4/4';
+
+  constructor(type: 'keySig' | 'timeSig', value: number | string) {
+    this.type = type;
+    this.newVal = value;
+    this.label = `Set ${type} = ${value}`;
+  }
+
+  execute(score: XPSHScore): XPSHScore {
+    this.prevKeySig = score.timing.key_sig ?? 0;
+    const ts = score.timing.time_signature;
+    this.prevTimeSig = `${ts.numerator}/${ts.denominator}`;
+    if (this.type === 'keySig') return setScoreKeySig(score, this.newVal as number);
+    return setScoreTimeSig(score, this.newVal as string);
+  }
+
+  undo(score: XPSHScore): XPSHScore {
+    if (this.type === 'keySig') return setScoreKeySig(score, this.prevKeySig);
+    return setScoreTimeSig(score, this.prevTimeSig);
   }
 }

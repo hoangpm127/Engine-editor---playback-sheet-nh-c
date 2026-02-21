@@ -16,81 +16,80 @@ import { useAudioScheduler } from '@/lib/useAudioScheduler';
 
 class SimplePianoSynth {
   private audioContext: AudioContext;
-  private activeNotes: Map<number, { oscillator: OscillatorNode; gain: GainNode }> = new Map();
+  private activeNotes: Map<number, { oscillators: OscillatorNode[]; gain: GainNode }> = new Map();
 
   constructor(audioContext: AudioContext) {
     this.audioContext = audioContext;
   }
 
-  /**
-   * Convert MIDI pitch to frequency
-   * Formula: f = 440 * 2^((pitch - 69) / 12)
-   */
   private midiToFreq(pitch: number): number {
     return 440 * Math.pow(2, (pitch - 69) / 12);
   }
 
-  /**
-   * Play note với scheduled time
-   */
   noteOn(pitch: number, velocity: number, when: number): void {
-    const freq = this.midiToFreq(pitch);
-    const gain = velocity / 127;
+    // Stop any previous instance of this pitch cleanly
+    const existing = this.activeNotes.get(pitch);
+    if (existing) {
+      const t = Math.max(when, this.audioContext.currentTime);
+      existing.gain.gain.cancelScheduledValues(t);
+      existing.gain.gain.setValueAtTime(0, t);
+      existing.oscillators.forEach(o => { try { o.stop(t + 0.01); } catch { /* */ } });
+      this.activeNotes.delete(pitch);
+    }
 
-    // Tạo oscillator
-    const oscillator = this.audioContext.createOscillator();
-    oscillator.type = 'sine'; // Piano-like sound (tạm thời)
-    oscillator.frequency.value = freq;
+    const freq  = this.midiToFreq(pitch);
+    const vel   = (velocity / 127) * 0.55; // master volume
 
-    // Tạo gain node cho volume control
-    const gainNode = this.audioContext.createGain();
-    gainNode.gain.value = 0;
-    
-    // Connect: oscillator -> gain -> destination
-    oscillator.connect(gainNode);
-    gainNode.connect(this.audioContext.destination);
+    // Master gain — piano ADSR
+    const masterGain = this.audioContext.createGain();
+    masterGain.gain.setValueAtTime(0, when);
+    masterGain.gain.linearRampToValueAtTime(vel, when + 0.002);          // 2ms attack
+    masterGain.gain.exponentialRampToValueAtTime(vel * 0.35, when + 0.1); // 100ms decay
+    masterGain.connect(this.audioContext.destination);
 
-    // Start oscillator
-    oscillator.start(when);
+    const oscillators: OscillatorNode[] = [];
+    const makeOsc = (type: OscillatorType, freqHz: number, gainVal: number) => {
+      const osc = this.audioContext.createOscillator();
+      osc.type = type;
+      osc.frequency.value = freqHz;
+      const g = this.audioContext.createGain();
+      g.gain.value = gainVal;
+      osc.connect(g);
+      g.connect(masterGain);
+      osc.start(when);
+      oscillators.push(osc);
+    };
 
-    // Envelope: attack
-    gainNode.gain.setValueAtTime(0, when);
-    gainNode.gain.linearRampToValueAtTime(gain * 0.3, when + 0.01);
+    makeOsc('triangle', freq,         1.00); // fundamental
+    makeOsc('triangle', freq * 2,     0.28); // 2nd harmonic — brightness
+    makeOsc('sine',     freq * 3,     0.10); // 3rd harmonic — warmth
+    makeOsc('sine',     freq * 1.003, 0.18); // slightly detuned copy — chorus
 
-    // Store active note
-    this.activeNotes.set(pitch, { oscillator, gain: gainNode });
+    this.activeNotes.set(pitch, { oscillators, gain: masterGain });
   }
 
-  /**
-   * Stop note với scheduled time
-   */
   noteOff(pitch: number, when: number): void {
     const active = this.activeNotes.get(pitch);
     if (!active) return;
-
-    const { oscillator, gain } = active;
-
-    // Envelope: release
-    gain.gain.setValueAtTime(gain.gain.value, when);
-    gain.gain.linearRampToValueAtTime(0, when + 0.3);
-
-    // Stop oscillator sau khi release
-    oscillator.stop(when + 0.3);
-
-    // Remove from active notes
+    const { oscillators, gain } = active;
+    const t = Math.max(when, this.audioContext.currentTime);
+    gain.gain.cancelScheduledValues(t);
+    gain.gain.setValueAtTime(gain.gain.value, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.75); // 750ms release
+    oscillators.forEach(o => { try { o.stop(t + 0.80); } catch { /* */ } });
     this.activeNotes.delete(pitch);
+    // Deferred disconnect so no click artifacts
+    const cleanupMs = (Math.max(0, when - this.audioContext.currentTime) + 0.85) * 1000;
+    setTimeout(() => { try { gain.disconnect(); } catch { /* */ } }, cleanupMs);
   }
 
-  /**
-   * Stop tất cả notes ngay lập tức
-   */
   stopAll(): void {
     const now = this.audioContext.currentTime;
-    this.activeNotes.forEach(({ oscillator, gain }) => {
+    this.activeNotes.forEach(({ oscillators, gain }) => {
       gain.gain.cancelScheduledValues(now);
       gain.gain.setValueAtTime(gain.gain.value, now);
       gain.gain.linearRampToValueAtTime(0, now + 0.05);
-      oscillator.stop(now + 0.05);
+      oscillators.forEach(o => { try { o.stop(now + 0.06); } catch { /* */ } });
     });
     this.activeNotes.clear();
   }
@@ -103,60 +102,62 @@ class SimplePianoSynth {
 export interface XpshPlayerProps {
   score: XPSHScore;
   autoPlay?: boolean;
+  /** Called every animation frame during playback with current position in ms */
+  onTimeUpdate?: (ms: number, isPlaying: boolean, tempo: number) => void;
+  /** Called once controls are ready — gives parent play/pause/stop handles */
+  onReady?: (controls: { play: () => void; pause: () => void; stop: () => void }) => void;
 }
 
-export function XpshPlayer({ score, autoPlay = false }: XpshPlayerProps) {
+export function XpshPlayer({ score, autoPlay = false, onTimeUpdate, onReady }: XpshPlayerProps) {
   // ========================================================================
   // State
   // ========================================================================
 
   const [tempo, setTempo] = useState(score.timing.tempo_bpm);
-  const synthRef = useRef<SimplePianoSynth | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
+
+  // ========================================================================
+  // Single AudioContext — owned here, shared with scheduler
+  // Initialised synchronously so the ref is populated before useAudioScheduler
+  // ========================================================================
+
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const synthRef    = useRef<SimplePianoSynth | null>(null);
+
+  // Safe synchronous init (browser only; 'use client' ensures no SSR conflict)
+  if (typeof window !== 'undefined' && !audioCtxRef.current) {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioCtxRef.current = ctx;
+      synthRef.current    = new SimplePianoSynth(ctx);
+    } catch { /* will retry on first play() */ }
+  }
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      synthRef.current?.stopAll();
+      audioCtxRef.current?.close();
+      audioCtxRef.current = null;
+      synthRef.current    = null;
+    };
+  }, []);
 
   // ========================================================================
   // Timeline Compilation
   // ========================================================================
 
-  // Compile timeline từ score
-  const baseTimeline = useMemo(() => {
-    return compileTimeline(score);
-  }, [score]);
-
-  // Retime timeline theo tempo hiện tại
-  const timeline = useMemo(() => {
-    return retimeTimeline(baseTimeline, tempo);
-  }, [baseTimeline, tempo]);
+  const baseTimeline = useMemo(() => compileTimeline(score), [score]);
+  const timeline     = useMemo(() => retimeTimeline(baseTimeline, tempo), [baseTimeline, tempo]);
 
   // ========================================================================
-  // Initialize Audio
-  // ========================================================================
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    // Create AudioContext
-    audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    
-    // Create synthesizer
-    synthRef.current = new SimplePianoSynth(audioContextRef.current);
-
-    return () => {
-      // Cleanup
-      if (synthRef.current) {
-        synthRef.current.stopAll();
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-      }
-    };
-  }, []);
-
-  // ========================================================================
-  // Audio Callbacks
+  // Audio Callbacks — use the SAME AudioContext the scheduler sees
   // ========================================================================
 
   const handleNoteOn = useCallback((pitch: number, velocity: number, when: number) => {
+    // Ensure synth exists (lazy fallback if init was deferred)
+    if (!synthRef.current && audioCtxRef.current) {
+      synthRef.current = new SimplePianoSynth(audioCtxRef.current);
+    }
     synthRef.current?.noteOn(pitch, velocity, when);
   }, []);
 
@@ -165,7 +166,7 @@ export function XpshPlayer({ score, autoPlay = false }: XpshPlayerProps) {
   }, []);
 
   // ========================================================================
-  // Audio Scheduler
+  // Audio Scheduler — receives our AudioContext so both share one clock
   // ========================================================================
 
   const [state, controls] = useAudioScheduler(
@@ -173,10 +174,28 @@ export function XpshPlayer({ score, autoPlay = false }: XpshPlayerProps) {
     handleNoteOn,
     handleNoteOff,
     {
-      lookaheadMs: 200,
-      scheduleIntervalMs: 50
+      lookaheadMs: 80,
+      scheduleIntervalMs: 20,
+      audioContext: audioCtxRef.current,
     }
   );
+
+  // ========================================================================
+  // Expose controls to parent
+  // ========================================================================
+
+  useEffect(() => {
+    onReady?.(controls);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onReady]); // controls identity is stable from useAudioScheduler
+
+  // ========================================================================
+  // Emit playback position to parent (cursor line)
+  // ========================================================================
+
+  useEffect(() => {
+    onTimeUpdate?.(state.currentMs, state.isPlaying, tempo);
+  }, [state.currentMs, state.isPlaying, tempo, onTimeUpdate]);
 
   // ========================================================================
   // Auto Play

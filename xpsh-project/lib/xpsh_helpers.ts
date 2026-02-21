@@ -18,6 +18,8 @@ export interface XPSHTiming {
   ticks_per_quarter: number;   // Số tick trong 1 quarter note (phải là 480)
   tempo_bpm: number;           // Tempo tính bằng beats per minute
   time_signature: XPSHTimeSignature;
+  /** Key signature: number of sharps (+) or flats (-). 0 = C major. */
+  key_sig?: number;
 }
 
 /** Metadata information */
@@ -97,6 +99,12 @@ export interface XPSHEvent {
   ties?: TieRef[];
   /** Tuplet grouping info */
   tuplet?: TupletInfo;
+  /** Dynamic marking: pp | p | mp | mf | f | ff | cresc | dim */
+  dynamic?: string;
+  /** Articulation symbols applied to this event */
+  articulations?: string[];
+  /** Per-pitch fingering numbers (index parallel to pitches[]) */
+  fingering?: number[];
 }
 
 /** Track object (staff) */

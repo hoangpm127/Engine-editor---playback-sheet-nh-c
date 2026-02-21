@@ -201,7 +201,10 @@ export function compileTimeline(score: XPSHScore): CompiledTimeline {
     return rank(a) - rank(b);
   });
 
-  const totalDurationMs = events.length > 0 ? Math.max(...events.map(e => e.t)) : 0;
+  const totalDurationMs = Math.max(
+    events.length > 0 ? Math.max(...events.map(e => e.t)) : 0,
+    ms(8 * 4 * tpq)   // always cover all 8 canvas measures
+  );
 
   return { events, totalDurationMs, tempo_bpm: tempo, ticks_per_quarter: tpq };
 }
@@ -224,7 +227,11 @@ export function retimeTimeline(
 ): CompiledTimeline {
   const ratio = originalTimeline.tempo_bpm / newTempoBpm;
   const newEvents = originalTimeline.events.map(ev => ({ ...ev, t: ev.t / ratio }));
-  const totalDurationMs = newEvents.length > 0 ? Math.max(...newEvents.map(e => e.t)) : 0;
+  const minDurationMs = 8 * 4 * 60000 / newTempoBpm; // 8 measures at new tempo
+  const totalDurationMs = Math.max(
+    newEvents.length > 0 ? Math.max(...newEvents.map(e => e.t)) : 0,
+    minDurationMs
+  );
   return { events: newEvents, totalDurationMs, tempo_bpm: newTempoBpm, ticks_per_quarter: originalTimeline.ticks_per_quarter };
 }
 

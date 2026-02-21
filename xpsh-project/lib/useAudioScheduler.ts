@@ -18,9 +18,11 @@ import { CompiledTimeline, TimelineEvent } from '@/lib/xpsh_timeline';
 // ============================================================================
 
 export interface AudioSchedulerOptions {
-  lookaheadMs?: number;        // Thời gian lookahead (default: 200ms)
-  scheduleIntervalMs?: number; // Interval giữa các lần schedule (default: 50ms)
+  lookaheadMs?: number;        // Thời gian lookahead (default: 100ms)
+  scheduleIntervalMs?: number; // Interval giữa các lần schedule (default: 25ms)
   debugMode?: boolean;         // Enable debug logging (default: false)
+  /** Provide an existing AudioContext so scheduler and synth share one clock */
+  audioContext?: AudioContext | null;
 }
 
 export interface AudioSchedulerState {
@@ -134,9 +136,10 @@ export function useAudioScheduler(
   options: AudioSchedulerOptions = {}
 ): [AudioSchedulerState, AudioSchedulerControls] {
   const {
-    lookaheadMs = 200,
-    scheduleIntervalMs = 50,
-    debugMode = false
+    lookaheadMs = 100,
+    scheduleIntervalMs = 25,
+    debugMode = false,
+    audioContext: externalAudioContext = null,
   } = options;
 
   // ========================================================================
@@ -177,53 +180,41 @@ export function useAudioScheduler(
   // ========================================================================
 
   useEffect(() => {
-    // Tạo AudioContext (lazy initialization)
-    if (typeof window !== 'undefined' && !audioContextRef.current) {
+    // Use external AudioContext if provided, else create our own
+    if (externalAudioContext) {
+      audioContextRef.current = externalAudioContext;
+    } else if (typeof window !== 'undefined' && !audioContextRef.current) {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      
-      if (debugMode) {
-        console.log('[AudioScheduler] AudioContext created');
-      }
     }
 
     return () => {
-      // PHASE 5: Comprehensive cleanup khi unmount
-      if (debugMode) {
-        console.log('[AudioScheduler] Unmounting - cleaning up');
-      }
-      
-      // Clear all timers
       if (scheduleTimerRef.current) {
         clearInterval(scheduleTimerRef.current);
         scheduleTimerRef.current = null;
       }
-      
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
         animationFrameRef.current = null;
       }
-      
-      // Kill all active notes
       const activeNotes = noteRegistryRef.current.getActiveNotes();
       if (activeNotes.length > 0 && audioContextRef.current) {
         const now = audioContextRef.current.currentTime;
-        activeNotes.forEach(pitch => {
-          onNoteOff(pitch, now);
-        });
+        activeNotes.forEach(pitch => { onNoteOff(pitch, now); });
       }
       noteRegistryRef.current.clear();
-      
-      // Close AudioContext
-      if (audioContextRef.current) {
+      // Only close AudioContext if we own it (not external)
+      if (!externalAudioContext && audioContextRef.current) {
         audioContextRef.current.close();
         audioContextRef.current = null;
-        
-        if (debugMode) {
-          console.log('[AudioScheduler] AudioContext closed');
-        }
       }
     };
-  }, [debugMode, onNoteOff]); // Include onNoteOff in deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once
+
+  // Keep audioContextRef in sync if caller swaps the external context
+  useEffect(() => {
+    if (externalAudioContext) audioContextRef.current = externalAudioContext;
+  }, [externalAudioContext]);
 
   // ========================================================================
   // Current Time Update (với requestAnimationFrame) - PHASE 5: Improved

@@ -10,7 +10,8 @@
   import { validateXpsh, formatValidationErrors } from '@/lib/xpsh_validator';
   import {
     InsertNoteCommand, DeleteNoteCommand,
-    InsertEventCommand, DeleteEventCommand, SetAccidentalCommand
+    InsertEventCommand, DeleteEventCommand, SetAccidentalCommand, MoveEventCommand,
+    SetDynamicCommand, ToggleArticulationCommand, SetFingeringCommand, SetScoreMetaCommand
   } from '@/lib/command';
   import { HistoryManager } from '@/lib/historyManager';
   import { ScoreCanvas } from '@/components/ScoreCanvas';
@@ -60,7 +61,6 @@
     const [selectedPitch, setSelectedPitch] = useState<number | null>(null);
     const [currentDuration, setCurrentDuration] = useState<DurationType>('quarter');
     const [currentTrack, setCurrentTrack] = useState<'track_rh' | 'track_lh'>('track_rh');
-    const [showPlayer, setShowPlayer] = useState(false);
     const [showGuide, setShowGuide] = useState(true);
     const [guideDone, setGuideDone] = useState<Set<number>>(new Set());
     const [title, setTitle] = useState('My Piano Piece');
@@ -85,6 +85,10 @@
     const [currentFingering, setCurrentFingering]       = useState<number | null>(null);
     const [currentTimeSig, setCurrentTimeSig] = useState<string>('4/4');
     const [currentKeySig, setCurrentKeySig]   = useState<number>(0); // −7…+7
+    const [playbackMs, setPlaybackMs]         = useState<number>(0);
+    const [playbackTempo, setPlaybackTempo]   = useState<number>(120);
+    const [isPlaying, setIsPlaying]           = useState<boolean>(false);
+    const playbackControlsRef = useRef<{ play: () => void; pause: () => void; stop: () => void } | null>(null);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -190,8 +194,100 @@
         const newScore = history.current.execute(cmd, score);
         setScore(newScore);
         syncHistory();
+        return;
       }
-    }, [score, editorTool, currentAccidental, syncHistory]);
+
+      // Apply dynamic if one is selected
+      if (currentDynamic) {
+        const cmd = new SetDynamicCommand(noteId, currentDynamic);
+        const newScore = history.current.execute(cmd, score);
+        setScore(newScore);
+        syncHistory();
+        return;
+      }
+
+      // Apply articulation if one is selected
+      if (currentArticulation) {
+        const cmd = new ToggleArticulationCommand(noteId, currentArticulation);
+        const newScore = history.current.execute(cmd, score);
+        setScore(newScore);
+        syncHistory();
+        return;
+      }
+
+      // Apply fingering if one is selected
+      if (currentFingering !== null) {
+        const ev = score.tracks.flatMap(t => t.events ?? []).find(e => e.id === noteId);
+        if (ev?.pitches) {
+          const fingering = ev.pitches.map(() => currentFingering);
+          const cmd = new SetFingeringCommand(noteId, fingering);
+          const newScore = history.current.execute(cmd, score);
+          setScore(newScore);
+          syncHistory();
+        }
+        return;
+      }
+    }, [score, editorTool, currentAccidental, currentDynamic, currentArticulation, currentFingering, syncHistory]);
+
+    const handleMoveNote = useCallback((
+      eventId: string, newPitch: number, newTick: number, newTrackId: string, prevTrackId: string
+    ) => {
+      const cmd = new MoveEventCommand(eventId, newTick, [newPitch], newTrackId);
+      const newScore = history.current.execute(cmd, score);
+      setScore(newScore);
+      setSelectedNoteId(eventId);
+      syncHistory();
+    }, [score, syncHistory]);
+
+    // Annotation handlers — apply to selected note
+    const handleDynamic = useCallback((dyn: string) => {
+      if (!selectedNoteId) return;
+      const newDynamic = score.tracks.some(t => (t.events ?? []).some(e => e.id === selectedNoteId && e.dynamic === dyn)) ? null : dyn;
+      const cmd = new SetDynamicCommand(selectedNoteId, newDynamic);
+      setScore(history.current.execute(cmd, score));
+      syncHistory();
+    }, [score, selectedNoteId, syncHistory]);
+
+    const handleArticulation = useCallback((art: string) => {
+      if (!selectedNoteId) return;
+      const cmd = new ToggleArticulationCommand(selectedNoteId, art);
+      setScore(history.current.execute(cmd, score));
+      syncHistory();
+    }, [score, selectedNoteId, syncHistory]);
+
+    const handleFingering = useCallback((finger: number) => {
+      if (!selectedNoteId) return;
+      const found = score.tracks.flatMap(t => t.events ?? []).find(e => e.id === selectedNoteId);
+      if (!found || !found.pitches) return;
+      // Assign finger to each pitch in the chord (user can refine later)
+      const fingering = found.pitches.map(() => finger);
+      const cmd = new SetFingeringCommand(selectedNoteId, fingering);
+      setScore(history.current.execute(cmd, score));
+      syncHistory();
+    }, [score, selectedNoteId, syncHistory]);
+
+    const handleKeySig = useCallback((k: number) => {
+      const cmd = new SetScoreMetaCommand('keySig', k);
+      setScore(history.current.execute(cmd, score));
+      setCurrentKeySig(k);
+      syncHistory();
+    }, [score, syncHistory]);
+
+    const handleTimeSig = useCallback((ts: string) => {
+      const cmd = new SetScoreMetaCommand('timeSig', ts);
+      setScore(history.current.execute(cmd, score));
+      setCurrentTimeSig(ts);
+      syncHistory();
+    }, [score, syncHistory]);
+
+    const handleTimeUpdate = useCallback((ms: number, playing: boolean, tempo: number) => {
+      setPlaybackMs(ms);
+      setPlaybackTempo(tempo);
+      setIsPlaying(playing);
+    }, []);
+
+    /** Convert ms + bpm → MIDI tick (TPQ=480) */
+    const playbackTick = Math.round((playbackMs / 60000) * playbackTempo * 480);
 
     const handleDeleteNote = useCallback(() => {
       if (!selectedNoteId) return;
@@ -376,6 +472,10 @@
         setScore(loadedScore);
         setTitle(loadedScore.metadata.title);
         setSelectedNoteId(null);
+        // Sync key/time sig UI state from loaded score
+        setCurrentKeySig(loadedScore.timing.key_sig ?? 0);
+        const ts = loadedScore.timing.time_signature;
+        setCurrentTimeSig(`${ts.numerator}/${ts.denominator}`);
       } catch (error) {
         alert(`Failed to load file: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
@@ -457,11 +557,18 @@
 
             {/* Playback controls */}
             <div style={s.playRow}>
-              <button onClick={() => setShowPlayer(p => !p)}
-                style={{ ...s.playBtn, background: showPlayer ? '#1d6fa8' : '#2b8cee', boxShadow: '0 4px 14px rgba(43,140,238,.4)' }}>
-                <span style={{ fontSize: 26, marginLeft: 3 }}>▶</span>
+              <button
+                onClick={() => {
+                  if (isPlaying) playbackControlsRef.current?.pause();
+                  else playbackControlsRef.current?.play();
+                }}
+                style={{ ...s.playBtn, background: isPlaying ? '#dc2626' : '#2b8cee', boxShadow: `0 4px 14px ${isPlaying ? 'rgba(220,38,38,.4)' : 'rgba(43,140,238,.4)'}` }}>
+                <span style={{ fontSize: 22, marginLeft: isPlaying ? 0 : 3 }}>{isPlaying ? '⏸' : '▶'}</span>
               </button>
-              <button style={s.playBtnSm} title="Stop">
+              <button style={s.playBtnSm} title="Stop" onClick={() => {
+                playbackControlsRef.current?.stop();
+                setPlaybackMs(0);
+              }}>
                 <span>■</span>
               </button>
               <button style={s.playBtnSm} title="Loop">
@@ -819,7 +926,7 @@
                   <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:5 }}>
                     {(['2/4','3/4','4/4','6/8','12/8','5/4'] as string[]).map(ts => (
                       <button key={ts}
-                        onClick={() => setCurrentTimeSig(ts)}
+                        onClick={() => { setCurrentTimeSig(ts); handleTimeSig(ts); }}
                         style={{ ...s.block, ...s.blockGreen2, ...(currentTimeSig===ts ? s.blockActiveGreen2 : {}),
                           padding:'10px 0', justifyContent:'center', fontSize:14, fontWeight:700 }}>
                         {ts}
@@ -839,7 +946,7 @@
                       [0,'C'],[-1,'F'],[-2,'Bb'],[-3,'Eb'],[-4,'Ab'],[1,'G'],[2,'D'],[3,'A'],[4,'E'],
                     ] as [number,string][]).map(([k,name]) => (
                       <button key={k}
-                        onClick={() => setCurrentKeySig(k)}
+                        onClick={() => { setCurrentKeySig(k); handleKeySig(k); }}
                         style={{ ...s.block, ...s.blockGreen2, ...(currentKeySig===k ? s.blockActiveGreen2 : {}),
                           padding:'8px 0', justifyContent:'center', flexDirection:'column', fontSize:12 }}>
                         <span style={{ fontWeight:700 }}>{name}</span>
@@ -979,19 +1086,26 @@
                 selectedNoteId={selectedNoteId}
                 onNoteClick={handleNoteClick}
                 onCanvasClick={handleCanvasClick}
+                onMoveNote={handleMoveNote}
                 currentVoice={currentVoice}
                 chordMode={chordMode}
                 currentDuration={currentDuration}
                 editorTool={editorTool}
+                keySig={currentKeySig}
+                timeSig={currentTimeSig}
+                playbackTick={playbackMs > 0 ? playbackTick : undefined}
               />
             </div>
 
-            {/* Player (collapsible) */}
-            {showPlayer && (
-              <div style={s.playerStrip}>
-                <XpshPlayer score={score} autoPlay={false} />
-              </div>
-            )}
+            {/* Player — always mounted but invisible; controls exposed via ref */}
+            <div style={{ display: 'none' }}>
+              <XpshPlayer
+                score={score}
+                autoPlay={false}
+                onTimeUpdate={handleTimeUpdate}
+                onReady={controls => { playbackControlsRef.current = controls; }}
+              />
+            </div>
 
             {/* Bottom timeline */}
             <div style={s.timeline}>
